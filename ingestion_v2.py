@@ -564,7 +564,10 @@ def load_ledger(src, master: pd.DataFrame, fc_region: dict, rep: Report):
                 f"template: {unknown_skus}. Add to master, commit, rerun.")
 
     df["region"] = df["fc"].map(fc_region)
-    avail = (df[df["region"].notna() & (df["region"] != "YSXA")]
+    # YSXA is KEPT here for display (stock workbook shows what's parked
+    # there); it is never planning supply — calculation iterates
+    # canonical.regions, which excludes YSXA and BLR4 IXD.
+    avail = (df[df["region"].notna()]
              .groupby(["sku_u", "region"])["bal"].sum().reset_index())
     rep.note(f"Ledger: SELLABLE balances across "
              f"{df['fc'].nunique()} FCs"
