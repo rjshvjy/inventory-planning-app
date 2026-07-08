@@ -26,7 +26,7 @@ from datetime import date
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Font
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 from ingestion_v2 import Canonical
 from calculation_v2 import PlanResult
@@ -45,11 +45,22 @@ def _header_map(ws) -> dict:
 
 
 def build_plan_workbook(res: PlanResult, can: Canonical,
-                        template_path, out_path) -> list[str]:
+                        template_path, out_path, stock=None) -> list[str]:
     """Clone the master template and fill the plan. Returns warnings raised
     during writing (missing columns, unplaceable rows) — caller shows them."""
     warns: list[str] = []
     wb = load_workbook(template_path)
+    # v2.9.1: house style harvested from the template's own Stock snapshot
+    from copy import copy as _copy
+    _sty = wb["Stock snapshot"].cell(2, 1) if "Stock snapshot" in \
+        wb.sheetnames else wb["Appointment plan"].cell(2, 1)
+    HDR_FILL, HDR_FONT = _copy(_sty.fill), _copy(_sty.font)
+    HDR_BORDER, HDR_ALIGN = _copy(_sty.border), _copy(_sty.alignment)
+
+    def _style_hdr(cell):
+        cell.fill, cell.font = _copy(HDR_FILL), _copy(HDR_FONT)
+        cell.border, cell.alignment = _copy(HDR_BORDER), _copy(HDR_ALIGN)
+
     ws = wb["Appointment plan"]
     hdr = _header_map(ws)
 
@@ -115,6 +126,12 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     det.cell(1, 1, "CALCULATION DETAILS — every component, flag and warning "
                    "behind the plan. Auto-written; do not edit.")
     det.cell(1, 1).font = Font(bold=True)
+    for col_, w_ in (("A", 14), ("B", 18), ("C", 30), ("D", 15), ("E", 12),
+                     ("F", 11), ("G", 12), ("H", 12), ("I", 10), ("J", 12),
+                     ("K", 12), ("L", 8), ("M", 11), ("N", 13), ("O", 9),
+                     ("P", 46)):
+        det.column_dimensions[col_].width = w_
+    det.freeze_panes = "D5"
     row = 3
 
     def block(title, df, cols=None):
@@ -127,16 +144,59 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
             return
         use = cols or list(df.columns)
         for j, cname in enumerate(use, 1):
-            det.cell(row, j, cname).font = Font(bold=True)
+            _style_hdr(det.cell(row, j, cname))
+        det.row_dimensions[row].height = 30
         row += 1
+        band_on, prev_key = False, object()
+        BAND = PatternFill("solid", fgColor="F2F2F2")
         for _, r_ in df.iterrows():
+            key = r_.get("ASIN", r_.get(use[0]))
+            if key != prev_key:
+                band_on, prev_key = not band_on, key
+            det.row_dimensions[row].height = 18
             for j, cname in enumerate(use, 1):
                 v = r_[cname]
-                det.cell(row, j, round(v, 3) if isinstance(v, float) else v)
+                c_ = det.cell(row, j,
+                              round(v, 2) if isinstance(v, float) else v)
+                if isinstance(v, float):
+                    c_.number_format = "0.00"
+                if band_on:
+                    c_.fill = PatternFill("solid", fgColor="F2F2F2")
+                if cname == "Flags":
+                    c_.alignment = Alignment(wrap_text=True, vertical="top")
             row += 1
         row += 1
 
-    block("PLAN LINES", res.plan)
+    alias = dict(zip(can.sku_master["sku_u"],
+                     can.sku_master["item"].where(
+                         can.sku_master["item"].astype(bool),
+                         can.sku_master["alias"])))
+    lead_days = res.meta.get("lead_days", {})
+    cover = float(res.meta.get("days_of_cover", 0))
+    dp = res.plan.copy()
+    dp.insert(1, "product", dp["sku_u"].map(alias))
+    dp["target_days"] = dp["region"].map(lead_days).astype(float) + cover
+    dp = dp.rename(columns={
+        "sku_u": "SKU", "product": "Product", "asin": "ASIN",
+        "region": "Region", "daily": "Daily sales (u/day)",
+        "current": "Current stock", "in_transit_counted":
+        "In-transit counted (in horizon)", "at_fc_pending":
+        "At-FC pending (counted)", "ixd_offset": "IXD offset",
+        "raw_requirement": "Raw requirement",
+        "rounded_qty": "Planned qty (rounded)", "boxes": "Boxes",
+        "days_cover_achieved":
+        "Days cover AFTER plan (existing+incoming+planned)",
+        "target_days": "Target days (lead + cover setting)",
+        "priority": "Priority", "flags": "Flags"})
+    dp = dp[["ASIN", "SKU", "Product", "Region", "Daily sales (u/day)",
+             "Current stock", "In-transit counted (in horizon)",
+             "At-FC pending (counted)", "IXD offset", "Raw requirement",
+             "Planned qty (rounded)", "Boxes",
+             "Target days (lead + cover setting)",
+             "Days cover AFTER plan (existing+incoming+planned)",
+             "Priority", "Flags"]]
+    block("PLAN LINES (days-cover exceeds target when carton rounding "
+          "overshoots or existing stock already covers more)", dp)
     block("STOCKOUT WARNINGS (on the rounded plan)", res.stockouts)
     block("RUN WARNINGS",
           pd.DataFrame({"warning": res.warnings})
@@ -154,23 +214,154 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     vs.cell(1, 1, "SALES VELOCITY vs PLAN — daily rate per region beside the "
                   "planned quantity it produced. Auto-written; do not edit.")
     vs.cell(1, 1).font = Font(bold=True)
-    vel = res.meta.get("velocity_summary", [])
-    headers = ["Region", "Daily velocity (units/day)", "Planned units",
-               "Days of cover achieved"]
-    for j, h in enumerate(headers, 1):
-        vs.cell(3, j, h).font = Font(bold=True)
-    for i, row_ in enumerate(vel, 4):
-        vs.cell(i, 1, row_["region"])
-        vs.cell(i, 2, row_["daily_velocity"])
-        vs.cell(i, 3, row_["planned_units"])
-        if row_.get("days_cover_achieved") is not None:
-            vs.cell(i, 4, row_["days_cover_achieved"])
-        if row_["region"] == "OVERALL":
-            for j in range(1, 5):
-                vs.cell(i, j).font = Font(bold=True)
-    vs.column_dimensions["A"].width = 20
-    for col in ("B", "C", "D"):
-        vs.column_dimensions[col].width = 24
+    regions = [r for r in res.meta.get("region_order", [])
+               if r in set(res.plan["region"])]
+    pq = res.plan.pivot_table(index="sku_u", columns="region",
+                              values="rounded_qty", aggfunc="sum",
+                              fill_value=0)
+    dv_ = res.plan.pivot_table(index="sku_u", columns="region",
+                               values="daily", aggfunc="sum", fill_value=0.0)
+    import numpy as _np
+    _dcsrc = res.plan.replace([_np.inf, -_np.inf], _np.nan)
+    dc_ = _dcsrc.pivot_table(index="sku_u", columns="region",
+                             values="days_cover_achieved", aggfunc="mean")
+    COVER = float(res.meta.get("days_of_cover", 0))
+    AMBER = PatternFill("solid", fgColor="FFE699")
+    sku_order = [s_ for s_ in can.sku_master["sku_u"] if s_ in pq.index]
+    # header rows 3 (region, merged over 2 cols) and 4 (Plan | Velocity)
+    sku_asin = dict(zip(can.sku_master["sku_u"], can.sku_master["asin"]))
+    for c0, t0 in ((1, "ASIN"), (2, "SKU"), (3, "Product")):
+        _style_hdr(vs.cell(3, c0, t0)); _style_hdr(vs.cell(4, c0, ""))
+    col = 4
+    SUB = ("Plan qty", "Velocity /day", "Days cover")
+    for rg in regions + ["TOTAL"]:
+        _style_hdr(vs.cell(3, col, rg))
+        vs.merge_cells(start_row=3, start_column=col,
+                       end_row=3, end_column=col + 2)
+        for k, t_ in enumerate(SUB):
+            _style_hdr(vs.cell(4, col + k, t_))
+        col += 3
+    vs.row_dimensions[3].height = 18
+    vs.row_dimensions[4].height = 28
+    REG_BORDER = Border(left=Side(style="medium", color="1F4E5F"))
+    band_starts = list(range(4, col, 3))
+
+    def _trio(r0, c0, q, v, dc=None):
+        if q:
+            vs.cell(r0, c0, int(q))
+        if v:
+            vs.cell(r0, c0 + 1, round(v, 2)).number_format = "0.00"
+            if dc is None:
+                dc = q / v if q else None
+            if dc is not None and dc == dc:      # not NaN
+                c2 = vs.cell(r0, c0 + 2, round(float(dc), 1))
+                c2.number_format = "0.0"
+                if COVER and dc > COVER * 1.5:   # 50% slack: carton rounding is not overstock
+                    c2.fill = AMBER              # over the cover setting
+    r_ = 5
+    BAND = PatternFill("solid", fgColor="F2F2F2")
+    for i_, sku in enumerate(sku_order):
+        vs.cell(r_, 1, sku_asin.get(sku, ""))
+        vs.cell(r_, 2, sku)
+        vs.cell(r_, 3, alias.get(sku, ""))
+        vs.row_dimensions[r_].height = 18
+        col = 4
+        wsum, vsum = 0.0, 0.0
+        for rg in regions:
+            v0 = float(dv_.loc[sku].get(rg, 0.0))
+            d0 = (float(dc_.loc[sku].get(rg))
+                  if rg in dc_.columns and dc_.loc[sku].notna().get(rg, False)
+                  else None)
+            _trio(r_, col, int(pq.loc[sku].get(rg, 0)), v0, dc=d0)
+            if v0 and d0 is not None:
+                wsum += v0 * d0; vsum += v0
+            col += 3
+        _trio(r_, col, int(pq.loc[sku].sum()), float(dv_.loc[sku].sum()),
+              dc=(wsum / vsum if vsum else None))
+        if i_ % 2:
+            for c_ in range(1, col + 3):
+                vs.cell(r_, c_).fill = PatternFill("solid",
+                                                   fgColor="F2F2F2")
+        r_ += 1
+    vs.cell(r_, 1, "TOTAL")
+    vs.row_dimensions[r_].height = 18
+    col = 4
+    gw, gv = 0.0, 0.0
+    for rg in regions:
+        w_ = float((dv_[rg] * dc_[rg].fillna(0)).sum()) \
+            if rg in dc_.columns else 0.0
+        v_ = float(dv_[rg][dc_[rg].notna()].sum()) \
+            if rg in dc_.columns else 0.0
+        _trio(r_, col, int(pq[rg].sum()), float(dv_[rg].sum()),
+              dc=(w_ / v_ if v_ else None))
+        gw += w_; gv += v_
+        col += 3
+    _trio(r_, col, int(pq.values.sum()), float(dv_.values.sum()),
+          dc=(gw / gv if gv else None))
+    for c_ in range(1, col + 3):
+        vs.cell(r_, c_).font = Font(bold=True)
+    # medium teal border at every region-block start, header to TOTAL
+    for c_ in band_starts + [col]:
+        for rr in range(3, r_ + 1):
+            cell = vs.cell(rr, c_)
+            cell.border = cell.border + REG_BORDER if cell.border else \
+                REG_BORDER
+    vs.column_dimensions["A"].width = 14
+    vs.column_dimensions["B"].width = 20
+    vs.column_dimensions["C"].width = 30
+    from openpyxl.utils import get_column_letter
+    for c_ in range(4, col + 3):
+        vs.column_dimensions[get_column_letter(c_)].width = 11
+    vs.freeze_panes = "D5"
+
+    # ---- Stock snapshot (v2.9.1): values from the uploaded workbook's
+    # current stock, written onto the template's own SKU rows.
+    if stock is not None and "Stock snapshot" in wb.sheetnames:
+        ss = wb["Stock snapshot"]
+        ss_hdr = {str(ss.cell(2, c).value).strip(): c
+                  for c in range(1, ss.max_column + 1) if ss.cell(2, c).value}
+        import pandas as _pd
+        cur = stock.current.pivot_table(index="sku_u", columns="region",
+                                        values="qty", aggfunc="sum",
+                                        fill_value=0)
+        itp = (stock.in_transit.pivot_table(index="sku_u", columns="region",
+                                            values="qty", aggfunc="sum",
+                                            fill_value=0)
+               if stock.in_transit is not None and len(stock.in_transit)
+               else _pd.DataFrame())
+        afp = (stock.at_fc.pivot_table(index="sku_u", columns="region",
+                                       values="pending", aggfunc="sum",
+                                       fill_value=0)
+               if stock.at_fc is not None and len(stock.at_fc)
+               else _pd.DataFrame())
+        sku_col = ss_hdr.get("SKU", 1)
+        lbl_col = ss_hdr.get("Row Labels", 2)
+        for r_ in range(3, ss.max_row + 1):
+            sku = ss.cell(r_, sku_col).value
+            if not sku:
+                continue
+            sku_u = str(sku).strip().upper()
+            lbl = str(ss.cell(r_, lbl_col).value or "")
+            src = (itp if lbl.startswith("In transit") else
+                   afp if lbl.startswith("At the FC") else cur)
+            if sku_u not in getattr(src, "index", []):
+                continue
+            total = 0
+            for region, c_ in ss_hdr.items():
+                if region in src.columns:
+                    v = int(src.loc[sku_u, region])
+                    if v:
+                        ss.cell(r_, c_, v)
+                    total += v
+            if "Grand Total" in ss_hdr and total:
+                ss.cell(r_, ss_hdr["Grand Total"], total)
+        if getattr(stock, "stock_as_of", None) is not None:
+            ss.cell(1, ss.max_column,
+                    "As of " + stock.stock_as_of.strftime("%d-%b-%Y"))
+
+    # README first (v2.9.1)
+    if "README" in wb.sheetnames:
+        wb.move_sheet("README", offset=-wb.sheetnames.index("README"))
 
     wb.save(out_path)
     return warns

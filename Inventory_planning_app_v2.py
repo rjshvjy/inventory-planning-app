@@ -289,7 +289,7 @@ with st.expander("Run meta & flagged assumptions"):
 # ------------------------------------------------------- output workbook
 out = io.BytesIO()
 master_src = _buf(o_master) or "reference/inventory_plan_template.xlsx"
-writer_warns = build_plan_workbook(res, can, master_src, out)
+writer_warns = build_plan_workbook(res, can, master_src, out, stock=stock)
 for w in writer_warns:
     st.warning(w)
 st.download_button(
