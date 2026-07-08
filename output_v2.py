@@ -145,5 +145,32 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
                             for k, v in res.meta.items()])
     block("RUN META (incl. flagged assumptions)", meta_df)
 
+    # ---- Sales-velocity tab (v2.9 change 4): the "eyes open" view — the
+    # rate that drove each region's plan, beside the plan itself.
+    VEL_SHEET = "Sales velocity"
+    if VEL_SHEET in wb.sheetnames:
+        del wb[VEL_SHEET]
+    vs = wb.create_sheet(VEL_SHEET)
+    vs.cell(1, 1, "SALES VELOCITY vs PLAN — daily rate per region beside the "
+                  "planned quantity it produced. Auto-written; do not edit.")
+    vs.cell(1, 1).font = Font(bold=True)
+    vel = res.meta.get("velocity_summary", [])
+    headers = ["Region", "Daily velocity (units/day)", "Planned units",
+               "Days of cover achieved"]
+    for j, h in enumerate(headers, 1):
+        vs.cell(3, j, h).font = Font(bold=True)
+    for i, row_ in enumerate(vel, 4):
+        vs.cell(i, 1, row_["region"])
+        vs.cell(i, 2, row_["daily_velocity"])
+        vs.cell(i, 3, row_["planned_units"])
+        if row_.get("days_cover_achieved") is not None:
+            vs.cell(i, 4, row_["days_cover_achieved"])
+        if row_["region"] == "OVERALL":
+            for j in range(1, 5):
+                vs.cell(i, j).font = Font(bold=True)
+    vs.column_dimensions["A"].width = 20
+    for col in ("B", "C", "D"):
+        vs.column_dimensions[col].width = 24
+
     wb.save(out_path)
     return warns

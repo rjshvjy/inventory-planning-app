@@ -489,7 +489,45 @@ def run_calculation(can: Canonical, stock: StockInputs, days_of_cover: float,
                    .sort_values(["sku_u", "region"])
                    .reset_index(drop=True))
 
+    # v2.9 §5c: flag every plan line in a region that received user-mapped
+    # FC stock this run (per-run mapping, surfaced in output, never silent)
+    fcmap_regions = {}
+    for fc, r_ in can.fc_resolutions.items():
+        if r_.get("action") == "map" and r_.get("fulfillable", True):
+            fcmap_regions.setdefault(r_["region"], []).append(fc)
+    if fcmap_regions:
+        result.plan["flags"] = result.plan.apply(
+            lambda x: ";".join(filter(None, [x["flags"]] + [
+                f"FC_MAPPED({fc}->{x['region']})"
+                for fc in fcmap_regions.get(x["region"], [])])), axis=1)
+        for region, fcs in fcmap_regions.items():
+            result.warnings.append(
+                f"Region {region} includes stock from user-mapped FC(s) "
+                f"{fcs} this run (not in registration) — lines flagged "
+                f"FC_MAPPED.")
+    for fc, r_ in can.fc_resolutions.items():
+        if r_.get("action") == "map" and not r_.get("fulfillable", True):
+            result.warnings.append(
+                f"FC {fc} stock mapped to {r_['region']} but marked NOT "
+                f"fulfillable — shown, excluded from planning supply.")
+
+    # v2.9 change 4: per-region + overall velocity summary (drives the
+    # Sales-velocity output tab; presentation of existing math, no new math)
+    vel = (result.plan.groupby("region")
+           .agg(daily_velocity=("daily", "sum"),
+                planned_units=("rounded_qty", "sum")).reset_index())
+    vel["days_cover_achieved"] = (
+        vel["planned_units"] / vel["daily_velocity"]).where(
+        vel["daily_velocity"] > 0).round(1)
+    overall = {"region": "OVERALL",
+               "daily_velocity": round(float(vel["daily_velocity"].sum()), 2),
+               "planned_units": int(vel["planned_units"].sum()),
+               "days_cover_achieved": None}
+    velocity_summary = vel.round({"daily_velocity": 2}).to_dict("records")         + [overall]
+
     result.meta = {
+        "velocity_summary": velocity_summary,
+        "fc_resolutions": dict(can.fc_resolutions),
         "anchor_date": str(stock.stock_as_of.date()) if stock.stock_as_of
                        else None,
         "days_of_cover": days_of_cover,

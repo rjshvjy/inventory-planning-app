@@ -74,13 +74,84 @@ if not (f_sales and f_general and f_ledger):
 if not (f_sales and f_general and f_ledger):
     st.stop()
 
-can, rep = run_ingestion(
-    _buf(f_sales), _buf(f_general), _buf(f_ledger),
-    config_path=_buf(o_cfg) or "reference/configurations.xlsx",
-    master_path=_buf(o_master) or "reference/inventory_plan_template.xlsx",
-    fcreg_path=_buf(o_fcreg) or "reference/fc_registration.pdf",
-    window_days_override=window_override or None,
-)
+def _ingest(fc_resolutions=None, recency_acknowledged=False):
+    return run_ingestion(
+        _buf(f_sales), _buf(f_general), _buf(f_ledger),
+        config_path=_buf(o_cfg) or "reference/configurations.xlsx",
+        master_path=_buf(o_master) or "reference/inventory_plan_template.xlsx",
+        fcreg_path=_buf(o_fcreg) or "reference/fc_registration.pdf",
+        window_days_override=window_override or None,
+        fc_resolutions=fc_resolutions,
+        recency_acknowledged=recency_acknowledged,
+    )
+
+# Pass 1 — detect. v2.9 gates are answered below; pass 2 applies them.
+can, rep = _ingest()
+
+# ---------- v2.9 §5c: FC-review gate (interactive, per-run, stateless) ----
+fc_resolutions = {}
+if rep.ok and rep.needs_fc_review:
+    st.subheader("FC review needed — stock in unregistered FC(s)")
+    st.write("The ledger holds sellable stock in FC(s) not present in the "
+             "registration file. Decide per FC **for this run** (the "
+             "permanent fix is committing a refreshed registration export — "
+             "this prompt then disappears on its own):")
+    aborted = False
+    for fc, units in rep.needs_fc_review.items():
+        st.markdown(f"**{fc}** — holds **{units} sellable units**, not in "
+                    f"the registration file.")
+        action = st.selectbox(
+            f"How should {fc} be treated this run?",
+            options=["map", "ixd", "ignore", "abort"],
+            format_func=lambda v: {
+                "map": "Map to a region (recommended for a normal regional "
+                       "FC)",
+                "ixd": "Treat as IXD cross-dock (rare — only if it truly "
+                       "redistributes)",
+                "ignore": "Ignore — show its stock, never count it",
+                "abort": "Abort — I will fix the registration file instead",
+            }[v], key=f"fcact_{fc}")
+        if action == "abort":
+            aborted = True
+        elif action == "map":
+            region = st.selectbox(
+                f"Which region serves {fc}?", options=can.regions,
+                key=f"fcreg_{fc}")
+            fulfillable = st.selectbox(
+                f"Is {fc}'s stock currently fulfillable?",
+                options=[True, False],
+                format_func=lambda v: ("Fulfillable — count it as supply "
+                                       "(default)") if v else
+                                      ("Not fulfillable — show it, exclude "
+                                       "from planning (e.g. GST-frozen)"),
+                key=f"fcful_{fc}")
+            fc_resolutions[fc] = {"action": "map", "region": region,
+                                  "fulfillable": fulfillable}
+        else:
+            fc_resolutions[fc] = {"action": action}
+    if aborted:
+        st.error("Run aborted at your request — commit a refreshed "
+                 "registration file and rerun.")
+        st.stop()
+
+# ---------- v2.9 §6a: sales-recency acknowledge gate ----------------------
+recency_ok = False
+if rep.ok and rep.needs_recency_ack:
+    ra = rep.needs_recency_ack
+    st.subheader("Sales-window recency — please confirm")
+    st.write(f"Your sales window ends **{ra['sales_end']}** but stock is as "
+             f"of **{ra['stock_anchor']}** — a {ra['gap_days']}-day gap "
+             f"(threshold {ra['threshold']:.0f}d). Planning will treat this "
+             f"window's velocity as **current**. The Sales-velocity tab in "
+             f"the output shows the rates applied, per region.")
+    recency_ok = st.checkbox(
+        "I understand — use this sales window as current velocity",
+        key="recency_ack")
+
+# Pass 2 — apply answers (only if anything needed answering)
+if fc_resolutions or recency_ok:
+    can, rep = _ingest(fc_resolutions=fc_resolutions or None,
+                       recency_acknowledged=recency_ok)
 
 c1, c2, c3 = st.columns(3)
 c1.metric("Errors (block the run)", len(rep.errors))
@@ -97,6 +168,20 @@ if not rep.ok:
     st.error("**Validation failed — nothing was planned.** Fix the items "
              "above and rerun; the app never guesses past an error.")
     st.stop()
+if rep.needs_fc_review:
+    st.info("Answer the FC-review question(s) above to continue — your "
+            "choices apply on the next rerun (widgets re-run the pipeline "
+            "automatically).")
+    st.stop()
+if rep.needs_recency_ack:
+    st.info("Tick the sales-recency confirmation above to continue.")
+    st.stop()
+if can.fc_resolutions:
+    st.warning("This run uses per-run FC mapping(s): " + ", ".join(
+        f"{fc} → {r.get('region', r['action'].upper())}"
+        + ("" if r.get("fulfillable", True) else " (NOT fulfillable — "
+           "excluded)") for fc, r in can.fc_resolutions.items())
+        + ". Affected plan lines are flagged FC_MAPPED in the output.")
 st.success("✅ Amazon files validated.")
 
 # fresh-workbook generation is always available once ingestion passes
@@ -175,6 +260,13 @@ if m["demand_units_excluded"] > 0:
 st.subheader("Region priorities")
 st.dataframe(pd.DataFrame([res.region_priorities]).T
              .rename(columns={0: "Priority"}), use_container_width=True)
+
+st.subheader("Sales velocity vs plan (eyes-open view)")
+st.dataframe(pd.DataFrame(m["velocity_summary"]).rename(columns={
+    "region": "Region", "daily_velocity": "Daily velocity (u/day)",
+    "planned_units": "Planned units",
+    "days_cover_achieved": "Days cover achieved"}),
+    use_container_width=True, hide_index=True)
 
 st.subheader("Plan (rounded quantities)")
 piv = (res.plan.pivot_table(index="sku_u", columns="region",

@@ -167,20 +167,23 @@ def run(uploads: Path, out: Path) -> int:
               "uploads dir."); return 2
 
     print("== fixtures ==")
-    f1 = make_registration_csv(uploads, out)
-    f2 = make_config_copy(config_src, out)
+    # v2.9: F1 (registration CSV) and F2 (tolerance copy) are OBSOLETE —
+    # the FC-review gate takes MAA4 via fc_resolutions against the REAL PDF,
+    # and the 5-day sales/stock gap passes silently (< sales_recency_prompt_days).
     f3 = make_translated_workbook(uploads, out)
-    print(f"  F1 {f1.name} | F2 {f2.name} (tolerance 10) | "
-          f"F3 {f3.name} (Pune lead = {PUNE_LEAD_DAYS}, CONFIRM)")
+    print(f"  F3 {f3.name} (Pune lead = {PUNE_LEAD_DAYS}, CONFIRM) — only fixture left")
 
     print("== ingestion ==")
     can, rep = ing.run_ingestion(
         open(uploads / "Monthly_report.csv", "rb"),
         open(uploads / "General_stock_--_Amazon_format__Jul_7__2026_.csv", "rb"),
         open(uploads / "Stock_FC_wise_--_Amazon_format__Jul_7__2026_.csv", "rb"),
-        config_path=str(f2),
+        config_path=str(config_src),
         master_path=str(uploads / "inventory_plan_template.xlsx"),
-        fcreg_path=open(f1, "rb"))
+        fcreg_path=str(uploads / "fc_registration.pdf"),
+        fc_resolutions={"MAA4": {"action": "map",
+                                 "region": "Chennai (TN)",
+                                 "fulfillable": True}})   # v2.9 §5c
     for e in rep.errors:
         print("  ERR:", e)
     if not rep.ok:

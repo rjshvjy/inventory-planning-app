@@ -92,6 +92,7 @@ CONFIG_KEYS = {  # Config tab: required parameter -> (type, sane-range check)
     "ixd_transfer_days": (float, lambda v: 0 <= v <= 60),
     "ixd_confidence": (float, lambda v: 0 <= v <= 1),
     "min_stockout_deficit_units": (float, lambda v: 0 <= v <= 1000),
+    "sales_recency_prompt_days": (float, lambda v: 0 < v <= 365),  # v2.9 §6a
 }
 
 # ---------------------------------------------------------------- reporting
@@ -103,6 +104,9 @@ class Report:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     info: list[str] = field(default_factory=list)
+    # v2.9 interactive gates — NOT errors; app must resolve before calculating
+    needs_fc_review: dict = field(default_factory=dict)   # fc -> sellable units
+    needs_recency_ack: dict = field(default_factory=dict) # {sales,stock,gap_days}
 
     def err(self, msg): self.errors.append(msg)
     def warn(self, msg): self.warnings.append(msg)
@@ -118,6 +122,7 @@ class Canonical:
     fc_types: dict = field(default_factory=dict)          # FC code -> IXD|IGNORE
     region_splits: list = field(default_factory=list)      # rows of split table
     demand_map: dict = field(default_factory=dict)          # non-FC demand state -> serving state code (§5b)
+    fc_resolutions: dict = field(default_factory=dict)      # v2.9 §5c: per-run user FC mappings as applied
     fc_region: dict = field(default_factory=dict)          # FC code -> region label
     regions: list = field(default_factory=list)            # ordered region labels
     sku_master: pd.DataFrame | None = None                 # per-SKU master data
@@ -595,12 +600,13 @@ def load_ledger(src, master: pd.DataFrame, fc_region: dict, rep: Report):
     df["bal"] = pd.to_numeric(df[bal_c], errors="coerce").fillna(0)
 
     unknown_fc = sorted(set(df.loc[df["bal"] > 0, "fc"]) - set(fc_region))
-    if unknown_fc:
-        rep.err(f"Ledger holds stock in FC(s) not in the registration file "
-                f"and not classified: {unknown_fc}. Refresh the FC "
-                f"registration export, or classify them (regional/IXD/ignore) "
-                f"— e.g. add to FC_Types, or extend the registration CSV. "
-                f"(This is the MAA4-style case; nothing is silently dropped.)")
+    for fc in unknown_fc:                       # v2.9 §5c: interactive gate,
+        units = int(df.loc[(df["fc"] == fc), "bal"].sum())   # not a hard stop
+        rep.needs_fc_review[fc] = units
+        rep.warn(f"FC-review needed: '{fc}' holds {units} sellable units but "
+                 f"is not in the registration file — the app will ask you to "
+                 f"map / IXD / ignore / abort (per-run; permanent fix = "
+                 f"commit a refreshed registration export).")
     unknown_skus = sorted(set(df.loc[df["bal"] > 0, "sku_u"])
                           - set(master["sku_u"]))
     if unknown_skus:
@@ -627,10 +633,18 @@ def run_ingestion(sales_file, general_file, ledger_file,
                   master_path="reference/inventory_plan_template.xlsx",
                   fcreg_path="reference/fc_registration.pdf",
                   window_days_override: float | None = None,
-                  today: pd.Timestamp | None = None
+                  today: pd.Timestamp | None = None,
+                  fc_resolutions: dict | None = None,
+                  recency_acknowledged: bool = False
                   ) -> tuple[Canonical, Report]:
     """Full Extract+Validate pass. Returns (canonical data, report).
-    Calculation must not run unless report.ok is True."""
+    Calculation must not run unless report.ok is True AND the v2.9 gate
+    fields (rep.needs_fc_review, rep.needs_recency_ack) are empty/handled.
+
+    v2.9 (§5c/§6a): fc_resolutions = per-run user answers from the FC-review
+    gate, e.g. {"MAA4": {"action": "map", "region": "Chennai (TN)",
+    "fulfillable": True}} (actions: map / ixd / ignore). recency_acknowledged
+    = True suppresses the sales-recency prompt after the user confirms."""
     rep = Report()
     can = Canonical()
     today = today or pd.Timestamp.now().normalize()
@@ -666,6 +680,38 @@ def run_ingestion(sales_file, general_file, ledger_file,
                  f"mapped to serving regions "
                  f"({sorted(set(can.demand_map.values()))}).")
 
+    # v2.9 §5c — apply per-run FC resolutions BEFORE the ledger is read, so
+    # resolved FCs map cleanly and only unresolved ones raise the gate.
+    for fc, res in (fc_resolutions or {}).items():
+        fc, act = fc.strip().upper(), str(res.get("action", "")).lower()
+        if act == "map":
+            region = res.get("region")
+            if region not in can.regions:
+                rep.err(f"FC resolution: '{fc}' mapped to unknown region "
+                        f"{region!r} — pick from {can.regions}.")
+                continue
+            if res.get("fulfillable", True):
+                can.fc_region[fc] = region
+                rep.note(f"FC-review: {fc} mapped to {region} (fulfillable) "
+                         f"by user for this run — flagged in output.")
+            else:
+                can.fc_region[fc] = f"{fc} EXCLUDED({region})"
+                rep.warn(f"FC-review: {fc} mapped to {region} but marked NOT "
+                         f"fulfillable — its stock is shown, excluded from "
+                         f"planning supply this run.")
+        elif act == "ixd":
+            can.fc_region[fc] = "BLR4 IXD"
+            rep.warn(f"FC-review: {fc} treated as IXD by user — its stock "
+                     f"joins the cross-dock pool this run.")
+        elif act == "ignore":
+            can.fc_region[fc] = f"{fc} IGNORED"
+            rep.warn(f"FC-review: {fc} IGNORED by user this run — stock "
+                     f"shown, never counted.")
+        else:
+            rep.err(f"FC resolution for '{fc}': unknown action {act!r} "
+                    f"(map / ixd / ignore).")
+        can.fc_resolutions[fc] = dict(res)
+
     can.sales_daily, can.sales_window_days, sales_max = load_sales(
         sales_file, can.sku_master, can.config, rep, window_days_override)
     can.national = load_general_stock(general_file, can.sku_master, rep)
@@ -680,13 +726,26 @@ def run_ingestion(sales_file, general_file, ledger_file,
                  f"({lag} days behind today — Amazon runs ~2 days behind).")
     if sales_max is not None:
         can.effective_dates["sales"] = sales_max
-    if len(can.effective_dates) >= 2:
-        ds = list(can.effective_dates.values())
-        spread = (max(ds) - min(ds)).days
-        tol = can.config.get("freshness_tolerance_days", 3)
-        if spread > tol:
-            rep.err(f"Cross-file freshness: effective dates are {spread} days "
-                    f"apart ({ {k: str(v.date()) for k, v in can.effective_dates.items()} }) "
-                    f"— exceeds the {tol:.0f}-day tolerance. Refresh the stale "
-                    f"file before planning.")
+    # v2.9 §6a freshness SPLIT: sales-vs-stock is an acknowledge gate, not
+    # an error. (Stock-vs-stock pairs are checked where both dates exist —
+    # here only the ledger carries a stock date; the workbook's stock-as-of
+    # is compared against it by the workbook reader.)
+    if "ledger" in can.effective_dates and "sales" in can.effective_dates:
+        gap = (can.effective_dates["ledger"]
+               - can.effective_dates["sales"]).days
+        prompt_at = can.config.get("sales_recency_prompt_days", 60)
+        if gap > prompt_at and not recency_acknowledged:
+            rep.needs_recency_ack = {
+                "sales_end": str(can.effective_dates["sales"].date()),
+                "stock_anchor": str(can.effective_dates["ledger"].date()),
+                "gap_days": gap, "threshold": prompt_at}
+            rep.warn(f"Sales-recency: window ends "
+                     f"{can.effective_dates['sales'].date()}, stock anchor "
+                     f"{can.effective_dates['ledger'].date()} ({gap} days) — "
+                     f"exceeds {prompt_at:.0f}d; the app will ask you to "
+                     f"confirm this velocity as current before planning.")
+        elif gap > prompt_at and recency_acknowledged:
+            rep.note(f"Sales-recency acknowledged by user: {gap}-day-old "
+                     f"window applied as current velocity — flagged in "
+                     f"output.")
     return can, rep
