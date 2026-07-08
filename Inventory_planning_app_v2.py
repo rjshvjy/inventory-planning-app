@@ -194,7 +194,7 @@ with st.expander("Need a fresh daily stock workbook? (generate here)"):
     st.download_button(
         "⬇️ Generate & download fresh workbook",
         data=build_stock_workbook(can, prefill=prefill),
-        file_name=f"daily_stock_workbook_{pd.Timestamp.now():%Y_%m_%d}.xlsx")
+        file_name=f"daily_stock_workbook_{pd.Timestamp.now():%d_%b_%Y}.xlsx")
 
 # ------------------------------------------------------ gate 2: workbook
 if not f_workbook:
@@ -295,5 +295,7 @@ for w in writer_warns:
 st.download_button(
     "⬇️ Download plan workbook (Appointment plan + Calculation_Details)",
     data=out.getvalue(),
-    file_name=f"inventory_plan_{m['anchor_date']}.xlsx",
+    file_name=("inventory_plan_"
+               + pd.Timestamp(m["anchor_date"]).strftime("%d_%b_%Y")
+               + ".xlsx"),
     type="primary")

@@ -83,7 +83,7 @@ WARN_FONT = Font(name="Arial", size=11, bold=True, color="FF9C0006")
 THIN = Side(style="thin", color="FFC9C9C9")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 GREY_FILL = PatternFill("solid", start_color="FFF2F2F2")
-DATE_FMT = "dd\\-mmm\\-yy"
+DATE_FMT = "dd\\-mmm\\-yyyy"
 NUM_FMT = "#,##0"
 NUM_FMT_BLANKZERO = '#,##0;\\-#,##0;""'
 
@@ -342,13 +342,18 @@ def build_stock_workbook(can: Canonical, prefill: bool = True,
              font=AUTO_FONT, fill=GREY_FILL, fmt=DATE_FMT)
         _set(ws, r, 9, None, font=INPUT_FONT, fmt=DATE_FMT)
     dest_csv = ",".join(dest_list)
+    _ENFORCE = dict(allow_blank=True, showErrorMessage=True,
+                    errorStyle="stop", errorTitle="Pick from the list",
+                    error="Type nothing here — choose a value from the "
+                          "dropdown (v2.9.1: typed values like 'DELHI' "
+                          "break the app's region matching).")
     dv_dest = DataValidation(type="list", formula1=f'"{dest_csv}"',
-                             allow_blank=True)
+                             **_ENFORCE)
     dv_mode = DataValidation(type="list", formula1=f'"{",".join(MODES)}"',
-                             allow_blank=True)
+                             **_ENFORCE)
     dv_sku = DataValidation(type="list",
                             formula1=f"{TAB_REFERENCE}!$D$3:$D${sku_end}",
-                            allow_blank=True)
+                            **_ENFORCE)
     for dv, col in ((dv_dest, "B"), (dv_mode, "C"), (dv_sku, "D")):
         ws.add_data_validation(dv)
         dv.add(f"{col}3:{col}{it_last}")
@@ -383,10 +388,10 @@ def build_stock_workbook(can: Canonical, prefill: bool = True,
         _set(ws, r, 8, None, font=INPUT_FONT, fmt=DATE_FMT)
         _set(ws, r, 9, None, font=INPUT_FONT, fmt=DATE_FMT)
     dv_dest2 = DataValidation(type="list", formula1=f'"{dest_csv}"',
-                              allow_blank=True)
+                              **_ENFORCE)
     dv_sku2 = DataValidation(type="list",
                              formula1=f"{TAB_REFERENCE}!$D$3:$D${sku_end}",
-                             allow_blank=True)
+                             **_ENFORCE)
     ws.add_data_validation(dv_dest2)
     dv_dest2.add(f"B3:B{fc_last}")
     ws.add_data_validation(dv_sku2)
@@ -563,6 +568,25 @@ class StockInputs:
     stock_as_of: pd.Timestamp | None = None
 
 
+
+def _dest_normalizer(known: set | None):
+    """v2.9.1: deterministic tolerance for destination labels. Accepts the
+    canonical label ('Delhi (DL)'), its plain name ('DELHI'), or its code
+    ('DL'), case-insensitively — each derived from the live label itself,
+    so this is normalization, never guessing. Returns fn(raw) -> canonical
+    label or None."""
+    if known is None:
+        return lambda d: d
+    lut = {}
+    for lbl in known:
+        lut[lbl.upper()] = lbl
+        if "(" in lbl:
+            name = lbl.rsplit("(", 1)[0].strip().upper()
+            code = lbl.rsplit("(", 1)[1].rstrip(")").strip().upper()
+            lut.setdefault(name, lbl)
+            lut.setdefault(code, lbl)
+    return lambda d: lut.get(str(d).strip().upper())
+
 def read_stock_workbook(path_or_file, can: Canonical | None = None
                         ) -> tuple[StockInputs, Report]:
     """Parse the completed workbook's INPUT tabs. Every gate is loud:
@@ -712,14 +736,20 @@ def read_stock_workbook(path_or_file, can: Canonical | None = None
                     f"(STRICT SKU GATE).")
             continue
         dest = str(dest).strip()
-        if dest == COL_YSXA:
+        if dest.upper() == COL_YSXA:
             rep.err(f"'{TAB_INTRANSIT}' row {r}: YSXA is never a "
                     f"destination.")
             continue
-        if known_dests is not None and dest not in known_dests:
-            rep.err(f"'{TAB_INTRANSIT}' row {r}: Destination '{dest}' is "
-                    f"not a known region.")
-            continue
+        if known_dests is not None:
+            norm = _dest_normalizer(known_dests)(dest)
+            if norm is None:
+                rep.err(f"'{TAB_INTRANSIT}' row {r}: Destination '{dest}' is "
+                        f"not a known region.")
+                continue
+            if norm != dest:
+                rep.note(f"'{TAB_INTRANSIT}' row {r}: destination '{dest}' "
+                         f"read as '{norm}' (v2.9.1 tolerant matching).")
+            dest = norm
         try:
             q = float(qty)
             if q <= 0:
@@ -767,13 +797,19 @@ def read_stock_workbook(path_or_file, can: Canonical | None = None
                     f"(STRICT SKU GATE).")
             continue
         dest = str(dest).strip()
-        if dest == COL_YSXA:
+        if dest.upper() == COL_YSXA:
             rep.err(f"'{TAB_ATFC}' row {r}: YSXA is never a destination.")
             continue
-        if known_dests is not None and dest not in known_dests:
-            rep.err(f"'{TAB_ATFC}' row {r}: Destination '{dest}' is not a "
-                    f"known region.")
-            continue
+        if known_dests is not None:
+            norm = _dest_normalizer(known_dests)(dest)
+            if norm is None:
+                rep.err(f"'{TAB_ATFC}' row {r}: Destination '{dest}' is not "
+                        f"a known region.")
+                continue
+            if norm != dest:
+                rep.note(f"'{TAB_ATFC}' row {r}: destination '{dest}' read "
+                         f"as '{norm}' (v2.9.1 tolerant matching).")
+            dest = norm
         try:
             sq = float(shipped)
             if sq <= 0:
