@@ -151,6 +151,40 @@ pdfplumber</code></pre>
 <h3>Demand_Map tab <span class="tag">v2.8</span></h3>
 <p>Maps demand states WITHOUT a local FC to the region that serves them (e.g. Kerala→Bangalore). Boundary rule: the registration handles "state with FC → itself" automatically; Demand_Map handles ONLY "state without FC → serving region." A row naming an FC state is an error. A demand state that is neither an FC state nor mapped becomes a named warning with its unit count (never a silent drop).</p>
 
+
+<h3>How to edit each tab — practical walkthroughs</h3>
+<p><strong>Golden sequence for ANY reference-file change:</strong> download the current file from the repo → edit in Excel → upload back to the SAME path with the SAME filename ("Add file → Upload files" on the folder page; GitHub treats a same-named upload as an update) → one-line commit message → the app picks it up on the next run automatically.</p>
+
+<h4>Change a tunable number (Config tab)</h4>
+<ol><li>Open <code>reference/configurations.xlsx</code> → <strong>Config</strong> tab.</li>
+<li>Edit ONLY column B (the value). Never rename column A — the key names are what the code looks up.</li>
+<li>Column C explains each key; the table in §5 above gives defaults and effects.</li>
+<li>Commit in place. Example: planning on 21-day sales files? Set <code>min_sales_window_days</code> to 21.</li></ol>
+
+<h4>Add a Demand_Map row (a new no-FC state appears in sales)</h4>
+<ol><li>You'll know because a run shows: <em>"Demand state 'X' is neither an FC state nor in Demand_Map — N units EXCLUDED"</em>.</li>
+<li>In the <strong>Demand_Map</strong> tab add a row: spelled-out state name | 2-letter serving state code (must be a state that HAS FCs: DL, HR, KA, MH, TG, TN, UP, WB) | a note.</li>
+<li>Never add a row for a state that has its own FCs — that's an error by design (it maps to itself automatically).</li></ol>
+
+<h4>Declare a new special FC (FC_Types tab)</h4>
+<ol><li>Only needed if a NEW cross-dock (like BLR4) or own-warehouse (like YSXA) appears. Ordinary new FCs need nothing.</li>
+<li>Add: FC code | exactly <code>IXD</code> or <code>IGNORE</code> | note. Anything else in the Type column stops the run.</li></ol>
+
+<h3>Editing the master template — adding a new SKU (the most common admin task)</h3>
+<p>Trigger: a run halts with <em>"STRICT SKU GATE — file contains SKU(s) not in the master template: [NEW-SKU]"</em>. This is by design — the app will not invent a box size.</p>
+<ol>
+<li>Download <code>reference/inventory_plan_template.xlsx</code> from the repo.</li>
+<li>On the <strong>Appointment plan</strong> sheet, insert a row for the SKU <em>inside the existing SKU block</em> (headers are on row 2; SKU rows follow — do not leave a blank row inside the block, parsing stops at the first blank).</li>
+<li>Fill every master column for it: <strong>SKU</strong> (exactly as Amazon spells it), <strong>Alias / Display name</strong>, <strong>ASIN</strong> (from the Amazon listing — this is the planning key), <strong>ITEM</strong> (the human product name — this is what appears as "Product" in outputs), <strong>Units/Box</strong> (the carton size — critical, drives all rounding), <strong>Bottles/Unit</strong>, <strong>Litres/Unit</strong>, <strong>Kg/Unit</strong>, <strong>Oil Type</strong>, <strong>Bottle Type</strong>.</li>
+<li>If it's a temporary/suppression SKU of an existing product, give it the SAME ASIN — the app pools them automatically and asks the stock judgment per run.</li>
+<li>Mirror the row on the <strong>Stock snapshot</strong> sheet (its three-row block: product / In transit / At the FC lines) so the snapshot has somewhere to write.</li>
+<li>Upload back in place, commit ("add SKU XYZ, 12/box"). Rerun — the gate clears.</li>
+</ol>
+<div class="warn"><strong>Units/Box is the single most consequential cell you will ever edit.</strong> A wrong carton size silently mis-rounds every shipment of that SKU. Double-check it against the physical carton.</div>
+
+<h3>Lead times — where they actually live</h3>
+<p>Deliberately NOT in configurations.xlsx: shipping lead times change with reality, so they live in the <strong>daily stock workbook's Reference tab</strong>, reviewed by the user per run. The admin's only job is telling users to keep them honest. (The workbook builder seeds them; a region missing a lead time is a named error, never a silent default.)</p>
+
 <h2 id="gates">6. The validation gates &amp; their philosophy</h2>
 <p>Design philosophy, consistent across the app: <strong>fail loud, fail specific, never guess; where a fact needs human judgment, stop and ask rather than assume.</strong> The app proceeds to planning only when hard errors are zero AND every interactive gate is answered. Gate order:</p>
 <pre><code>schema/reference errors  (hard stop)
