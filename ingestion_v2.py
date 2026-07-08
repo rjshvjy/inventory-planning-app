@@ -66,6 +66,24 @@ STATE_VARIANTS = {  # spelling drift seen in real Amazon exports -> canonical
     "WB": "WEST BENGAL", "KL": "KERALA", "GJ": "GUJARAT", "RJ": "RAJASTHAN",
 }
 
+STATE_NAME_TO_CODE = {  # canonical spelled state -> 2-letter code (fact of the
+    # world, same family as INDIAN_STATES; used by Demand_Map validation §5b and
+    # by calculation's demand-state -> region resolver)
+    "ANDHRA PRADESH": "AP", "ARUNACHAL PRADESH": "AR", "ASSAM": "AS",
+    "BIHAR": "BR", "CHHATTISGARH": "CG", "GOA": "GA", "GUJARAT": "GJ",
+    "HARYANA": "HR", "HIMACHAL PRADESH": "HP", "JHARKHAND": "JH",
+    "KARNATAKA": "KA", "KERALA": "KL", "MADHYA PRADESH": "MP",
+    "MAHARASHTRA": "MH", "MANIPUR": "MN", "MEGHALAYA": "ML", "MIZORAM": "MZ",
+    "NAGALAND": "NL", "ODISHA": "OR", "PUNJAB": "PB", "RAJASTHAN": "RJ",
+    "SIKKIM": "SK", "TAMIL NADU": "TN", "TELANGANA": "TG", "TRIPURA": "TR",
+    "UTTAR PRADESH": "UP", "UTTARAKHAND": "UK", "WEST BENGAL": "WB",
+    "DELHI": "DL", "JAMMU AND KASHMIR": "JK", "LADAKH": "LA",
+    "PUDUCHERRY": "PY", "CHANDIGARH": "CH",
+    "ANDAMAN AND NICOBAR ISLANDS": "AN", "LAKSHADWEEP": "LD",
+    "DADRA AND NAGAR HAVELI": "DN", "DAMAN AND DIU": "DD",
+    "DADRA AND NAGAR HAVELI AND DAMAN AND DIU": "DH",
+}
+
 FC_CODE_RE = re.compile(r"^[A-Z]{3,4}\d?$|^[A-Z]{2}\d[A-Z0-9]$|^[A-Z]{4}$")
 CONFIG_KEYS = {  # Config tab: required parameter -> (type, sane-range check)
     "days_cover_ceiling": (float, lambda v: 1 <= v <= 365),
@@ -99,6 +117,7 @@ class Canonical:
     config: dict = field(default_factory=dict)
     fc_types: dict = field(default_factory=dict)          # FC code -> IXD|IGNORE
     region_splits: list = field(default_factory=list)      # rows of split table
+    demand_map: dict = field(default_factory=dict)          # non-FC demand state -> serving state code (§5b)
     fc_region: dict = field(default_factory=dict)          # FC code -> region label
     regions: list = field(default_factory=list)            # ordered region labels
     sku_master: pd.DataFrame | None = None                 # per-SKU master data
@@ -163,20 +182,23 @@ def _to_date(v):
 
 # ---------------------------------------------------- reference file loaders
 
-def load_config(path_or_file, rep: Report) -> tuple[dict, dict, list]:
-    """configurations.xlsx -> (config numbers, fc_types, region_splits)."""
-    cfg, fct, splits = {}, {}, []
+def load_config(path_or_file, rep: Report) -> tuple[dict, dict, list, dict]:
+    """configurations.xlsx -> (config numbers, fc_types, region_splits,
+    demand_map). Demand_Map (§5b) is structurally validated here; the
+    FC-dependent checks (serving code has FCs, no FC-state rows) run in
+    run_ingestion after the registration loads."""
+    cfg, fct, splits, dmap = {}, {}, [], {}
     try:
         wb = load_workbook(path_or_file, data_only=True)
     except Exception as e:
         rep.err(f"configurations.xlsx could not be opened: {e}")
-        return cfg, fct, splits
+        return cfg, fct, splits, dmap
 
-    for tab in ("Config", "FC_Types", "Region_Splits"):
+    for tab in ("Config", "FC_Types", "Region_Splits", "Demand_Map"):
         if tab not in wb.sheetnames:
             rep.err(f"configurations.xlsx is missing the '{tab}' tab.")
     if rep.errors:
-        return cfg, fct, splits
+        return cfg, fct, splits, dmap
 
     ws = wb["Config"]
     for r in range(2, ws.max_row + 1):
@@ -232,7 +254,29 @@ def load_config(path_or_file, rep: Report) -> tuple[dict, dict, list]:
             if not s["label"] or not s["prefixes"]:
                 rep.err(f"Region_Splits: state {st} row '{s['label']}' is "
                         f"missing a label or FC prefixes.")
-    return cfg, fct, splits
+
+    ws = wb["Demand_Map"]
+    for r in range(2, ws.max_row + 1):
+        st = ws.cell(r, 1).value
+        if st is None or str(st).strip() == "":
+            continue
+        state = str(st).strip().upper()
+        state = STATE_VARIANTS.get(state, state)        # tolerate spelling drift
+        code = str(ws.cell(r, 2).value or "").strip().upper()
+        if state not in INDIAN_STATES:
+            rep.err(f"Demand_Map: '{st}' is not a recognized Indian state/UT "
+                    f"name (row {r}).")
+            continue
+        if state in dmap:
+            rep.err(f"Demand_Map: duplicate row for '{state}' (row {r}) — "
+                    f"each demand state may appear once.")
+            continue
+        if not code or len(code) != 2 or not code.isalpha():
+            rep.err(f"Demand_Map: '{state}' has serving code {code!r} — must "
+                    f"be a 2-letter state code (row {r}).")
+            continue
+        dmap[state] = code
+    return cfg, fct, splits, dmap
 
 
 def load_master(path_or_file, rep: Report) -> pd.DataFrame | None:
@@ -591,7 +635,8 @@ def run_ingestion(sales_file, general_file, ledger_file,
     can = Canonical()
     today = today or pd.Timestamp.now().normalize()
 
-    can.config, can.fc_types, can.region_splits = load_config(config_path, rep)
+    can.config, can.fc_types, can.region_splits, can.demand_map = load_config(
+        config_path, rep)
     can.sku_master = load_master(master_path, rep)
     if rep.errors:                       # reference layer broken: stop early
         return can, rep
@@ -599,6 +644,27 @@ def run_ingestion(sales_file, general_file, ledger_file,
         fcreg_path, can.fc_types, can.region_splits, rep)
     if rep.errors:
         return can, rep
+
+    # Demand_Map FC-dependent validation (§5b) — needs the registration
+    fc_state_codes = {m.group(1) for lbl in can.fc_region.values()
+                      if lbl not in ("YSXA", "BLR4 IXD")
+                      and (m := re.search(r"\((\w{2})\)$", lbl))}
+    code_to_name = {v: k for k, v in STATE_NAME_TO_CODE.items()}
+    for state, code in list(can.demand_map.items()):
+        if code not in fc_state_codes:
+            rep.err(f"Demand_Map: '{state}' -> {code}, but {code} has no "
+                    f"registered FCs — demand cannot be served from a state "
+                    f"with no FC.")
+        own = STATE_NAME_TO_CODE.get(state)
+        if own in fc_state_codes:
+            rep.warn(f"Demand_Map: '{state}' now has its own registered FCs — "
+                     f"its row is ignored (maps to itself automatically); "
+                     f"delete it from configurations.xlsx.")
+            del can.demand_map[state]
+    if can.demand_map:
+        rep.note(f"Demand_Map: {len(can.demand_map)} non-FC demand states "
+                 f"mapped to serving regions "
+                 f"({sorted(set(can.demand_map.values()))}).")
 
     can.sales_daily, can.sales_window_days, sales_max = load_sales(
         sales_file, can.sku_master, can.config, rep, window_days_override)
