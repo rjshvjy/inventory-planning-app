@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventory Planning App — Admin Guide</title>
+<style>
+:root{--teal:#1F4E5F;--amber:#FFE699;--grey:#F2F2F2;--line:#d7dde0;}
+*{box-sizing:border-box}
+body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  line-height:1.6;color:#1a2226;max-width:900px;margin:0 auto;padding:2rem 1.4rem}
+h1{color:var(--teal);border-bottom:3px solid var(--teal);padding-bottom:.4rem}
+h2{color:var(--teal);margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
+h3{color:#2b3a40;margin-top:1.6rem}
+code{background:var(--grey);padding:.1rem .35rem;border-radius:3px;font-size:.9em}
+pre{background:#0f2b33;color:#e8f0f2;padding:1rem;border-radius:6px;overflow-x:auto;font-size:.85em}
+pre code{background:none;color:inherit;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93em}
+th,td{border:1px solid var(--line);padding:.5rem .7rem;text-align:left;vertical-align:top}
+th{background:var(--teal);color:#fff}
+tr:nth-child(even){background:var(--grey)}
+.note{background:#eef6f8;border-left:4px solid var(--teal);padding:.8rem 1rem;margin:1rem 0;border-radius:0 4px 4px 0}
+.warn{background:#fff8e6;border-left:4px solid #d9a400;padding:.8rem 1rem;margin:1rem 0;border-radius:0 4px 4px 0}
+.crit{background:#fdecea;border-left:4px solid #c0392b;padding:.8rem 1rem;margin:1rem 0;border-radius:0 4px 4px 0}
+.flow{background:var(--grey);border:1px solid var(--line);border-radius:6px;padding:1rem;font-family:monospace;font-size:.85em;white-space:pre;overflow-x:auto}
+.toc{background:var(--grey);border-radius:6px;padding:1rem 1.4rem}
+.toc a{color:var(--teal);text-decoration:none}.toc a:hover{text-decoration:underline}
+.tag{display:inline-block;background:var(--teal);color:#fff;font-size:.7rem;padding:.1rem .5rem;border-radius:10px;vertical-align:middle}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);color:#667;font-size:.85em}
+</style></head><body>
+
+<h1>Inventory Planning App — Administrator Guide</h1>
+<p><strong>Audience:</strong> whoever maintains, deploys, or debugs this app — not the daily planning user (that's the <em>User Guide</em>). <strong>Contract of record:</strong> the redesign specification (<code>Inventory_App_Redesign_Spec.md</code>, v2.9) is authoritative; this guide explains how the running system realises it. <span class="tag">v2.9.1</span></p>
+
+<div class="toc"><strong>Contents</strong><br>
+<a href="#what">1. What the app does &amp; the one rule that governs everything</a><br>
+<a href="#stack">2. Tech stack &amp; hosting</a><br>
+<a href="#arch">3. Architecture — the five-module pipeline</a><br>
+<a href="#repo">4. The repository as the single source of truth</a><br>
+<a href="#config">5. Configuration reference (every tab, every key)</a><br>
+<a href="#gates">6. The validation gates &amp; their philosophy</a><br>
+<a href="#maint">7. Maintenance scenarios (do X when Y happens)</a><br>
+<a href="#deep">8. Where the deep documentation &amp; tests live</a></div>
+
+<h2 id="what">1. What the app does &amp; the one rule that governs everything</h2>
+<p>The app turns three Amazon exports plus a human-maintained stock workbook into a per-SKU, per-region replenishment plan for an Amazon India FBA seller (Puvi). It computes sales velocity, assembles current + in-transit + at-FC stock, models the BLR4 cross-dock (IXD), rounds to carton sizes, simulates stockouts, and writes an Excel plan.</p>
+<div class="crit"><strong>THE governing constraint — internalise this first:</strong> the app is <strong>stateless</strong>. Streamlit Community Cloud spins the app up and down; it has <strong>no database and no memory between runs</strong>. <strong>The GitHub repository IS the only persistent store.</strong> Every standing fact — box sizes, FC→region mapping, config numbers, region splits, demand-state mapping — lives in a committed file and is re-read fresh on every run. If a change isn't committed to the repo, it does not exist to the next run. This single fact explains almost every design decision below.</p>
+
+<h2 id="stack">2. Tech stack &amp; hosting</h2>
+<table>
+<tr><th>Layer</th><th>Choice</th><th>Notes</th></tr>
+<tr><td>Language</td><td>Python 3</td><td>Pure functions in the engine; no OOP framework</td></tr>
+<tr><td>UI</td><td>Streamlit</td><td>Single-file app, widget-driven, reruns top-to-bottom on every interaction</td></tr>
+<tr><td>Data</td><td>pandas, numpy</td><td>All tabular work</td></tr>
+<tr><td>Excel I/O</td><td>openpyxl</td><td>Reads/writes .xlsx; data-validation dropdowns, formulas, styling</td></tr>
+<tr><td>PDF</td><td>pdfplumber</td><td>Parses the FC registration PDF (content-based, not position-based)</td></tr>
+<tr><td>Hosting</td><td>Streamlit Community Cloud</td><td>Auto-deploys from GitHub <code>main</code> on every commit</td></tr>
+<tr><td>Repo</td><td>github.com/rjshvjy/inventory-planning-app</td><td>Public; entry file <code>Inventory_planning_app_v2.py</code></td></tr>
+</table>
+<p><code>requirements.txt</code> (must stay complete or the deploy fails on import):</p>
+<pre><code>streamlit
+pandas
+openpyxl
+numpy
+pdfplumber</code></pre>
+<div class="note"><strong>Deploy model:</strong> there is no manual "build". Commit to <code>main</code> → Streamlit detects the change and redeploys within seconds. To force it, open <em>Manage app</em> (bottom-right of the live app) → reboot. Deploy/runtime errors show in that same log panel — the most common is a missing package in <code>requirements.txt</code> or a Config/code mismatch (see §5).</p>
+
+<h2 id="arch">3. Architecture — the five-module pipeline</h2>
+<p>The app is a strict, gated pipeline. Each module is independently testable and owns one job. The app file (<code>Inventory_planning_app_v2.py</code>) only orchestrates and renders — no business logic lives there.</p>
+<div class="flow">  three Amazon CSVs        configurations.xlsx        filled stock workbook
+  + registration PDF        + master template
+  + master template                |                        |
+         |                         |                        |
+         v                         v                        |
+  +---------------------------------------+                 |
+  |  ingestion_v2.py                      |                 |
+  |  run_ingestion() -> (Canonical, Report)                 |
+  |  parse - validate - map FC->region -  |                 |
+  |  pool sales - assemble ledger stock   |                 |
+  +---------------------------------------+                 |
+         | Canonical (validated)                            v
+         |                              +--------------------------------+
+         |                              |  workbook_builder_v2.py        |
+         |                              |  read_stock_workbook()         |
+         |                              |  -> StockInputs                |
+         |                              |  (also BUILDS fresh workbooks) |
+         |                              +--------------------------------+
+         |                                        | StockInputs
+         v                                        v
+  +-----------------------------------------------------------+
+  |  calculation_v2.py   run_calculation(Canonical,           |
+  |  StockInputs, days_of_cover, asin_judgments) -> PlanResult|
+  |  demand->region - supply - IXD - rounding - stockout sim  |
+  +-----------------------------------------------------------+
+         | PlanResult
+         v
+  +-----------------------------------------------------------+
+  |  output_v2.py  build_plan_workbook(PlanResult, Canonical, |
+  |  template, out, stock) -> plan .xlsx                       |
+  |  Appointment plan + Stock snapshot + Details + Velocity    |
+  +-----------------------------------------------------------+</div>
+
+<h3>Module responsibilities</h3>
+<table>
+<tr><th>Module</th><th>~lines</th><th>Owns</th></tr>
+<tr><td><code>ingestion_v2.py</code></td><td>751</td><td>Reading &amp; validating every input file; content-based column detection; FC→region mapping from the registration; sales pooling to sku×state; the strict SKU gate; the interactive-gate detection (FC-review, sales-recency). Produces <code>Canonical</code> + <code>Report</code>.</td></tr>
+<tr><td><code>workbook_builder_v2.py</code></td><td>843</td><td>BUILDING the daily stock workbook fresh from code (all tabs, formulas, enforced dropdowns, styling) AND READING a filled one back into <code>StockInputs</code>. The one module the app both writes with and reads with.</td></tr>
+<tr><td><code>calculation_v2.py</code></td><td>549</td><td>The planning engine. Pure functions, no Streamlit. Demand state→region resolution (§5b), supply assembly, IXD model, two-tier box rounding, stockout simulation, priorities. Produces <code>PlanResult</code>.</td></tr>
+<tr><td><code>output_v2.py</code></td><td>367</td><td>Writing the plan Excel by cloning the master template and filling it; the Calculation_Details, Stock snapshot and Sales-velocity tabs; all styling harvested from the template.</td></tr>
+<tr><td><code>Inventory_planning_app_v2.py</code></td><td>301</td><td>Streamlit orchestration only: uploads, the gate sequence, rendering results, download buttons. No business logic.</td></tr>
+<tr><td><code>golden_harness_v2.py</code></td><td>278</td><td>Headless test harness — runs the whole pipeline on sample data, dumps a comparison workbook, asserts known-good numbers. The entry point for regression testing.</td></tr>
+</table>
+
+<h3>The two data contracts (the objects that flow between modules)</h3>
+<p><strong>Canonical</strong> (from ingestion) carries: <code>config</code>, <code>fc_types</code>, <code>region_splits</code>, <code>demand_map</code>, <code>fc_resolutions</code>, <code>fc_region</code>, <code>regions</code>, <code>sku_master</code>, <code>sales_daily</code>, <code>sales_window_days</code>, <code>national</code>, <code>available</code>, <code>effective_dates</code>.</p>
+<p><strong>StockInputs</strong> (from the workbook reader) carries: <code>current</code>, <code>as_on_date</code>, <code>in_transit</code>, <code>at_fc</code>, <code>lead_days</code>, <code>stock_as_of</code>.</p>
+<div class="warn">When editing any module, treat these dataclass field sets as the contract. Adding/removing a field ripples to every consumer — grep the field name across all modules before changing it. (This is exactly how a past mislabelling bug crept in.)</div>
+
+<h2 id="repo">4. The repository as the single source of truth</h2>
+<p>Given statelessness (§1), the repo layout <em>is</em> the app's memory:</p>
+<table>
+<tr><th>Path</th><th>What it governs</th></tr>
+<tr><td><code>reference/configurations.xlsx</code></td><td>All standing business facts: tunable numbers, FC types, region splits, demand-state map (see §5)</td></tr>
+<tr><td><code>reference/inventory_plan_template.xlsx</code></td><td>The master: SKU list, ASIN, box sizes, per-unit data, oil/bottle types. Also the SHAPE of the output plan. Box sizes live ONLY here — never hardcoded.</td></tr>
+<tr><td><code>reference/fc_registration.pdf</code></td><td>Amazon's FC→state registration. The authoritative FC→region source. Refreshing this is how you fix an unregistered-FC situation permanently.</td></tr>
+<tr><td>the five <code>*_v2.py</code> at repo root</td><td>The application code</td></tr>
+<tr><td><code>requirements.txt</code></td><td>Python dependencies</td></tr>
+</table>
+<div class="crit"><strong>Update discipline — non-negotiable:</strong> to change a reference file, <strong>replace it in place with the SAME filename</strong> (GitHub "upload files", drag it in, commit). NEVER delete-then-reupload: a renamed file (<code>configurations (1).xlsx</code>) will not be found by the app, and deletion fragments the git history you'd roll back through. One-line commit message describing the change.</div>
+
+<h2 id="config">5. Configuration reference</h2>
+<p><code>configurations.xlsx</code> is validated on load; a bad edit (blank number, unknown FC type, a split with zero or two DEFAULTs, an orphaned FC, an FC-state row in Demand_Map) fails loud with a named error and stops the run. Required tabs: <code>Config</code>, <code>FC_Types</code>, <code>Region_Splits</code>, <code>Demand_Map</code> (plus a <code>Help</code> tab, free-text).</p>
+
+<h3>Config tab — the seven tunable numbers</h3>
+<table>
+<tr><th>Key</th><th>Default</th><th>What it does</th></tr>
+<tr><td><code>days_cover_ceiling</code></td><td>45</td><td>Slow-mover guard: if one full carton exceeds this many days of cover at a location's rate, propose a partial box (Tier-2) instead of forcing the carton.</td></tr>
+<tr><td><code>min_sales_window_days</code></td><td>30</td><td>HARD floor on sales-window length (applies to both date-inferred and override-supplied windows). Below this the rate is statistically noisy → error. Remedy is editing this key, not code.</td></tr>
+<tr><td><code>freshness_tolerance_days</code></td><td>3</td><td>Max spread among STOCK-type file dates (ledger / general / workbook). Beyond it → hard stop (a stock picture from different moments is corrupt).</td></tr>
+<tr><td><code>ixd_transfer_days</code></td><td>5</td><td>Assumed days for BLR4 IXD stock to reach a regional FC after Amazon redistributes. Times the IXD-offset arrivals.</td></tr>
+<tr><td><code>ixd_confidence</code></td><td>1.0</td><td>0–1. Fraction of the IXD proportional-split offset to apply. 1.0 = trust the split fully; 0 = treat IXD stock as informational only.</td></tr>
+<tr><td><code>min_stockout_deficit_units</code></td><td>1</td><td>Stockout warnings below this many units are suppressed (kills sub-unit noise).</td></tr>
+<tr><td><code>sales_recency_prompt_days</code> <span class="tag">v2.9</span></td><td>60</td><td>If the sales window's END is more than this many days behind the stock anchor, the app ASKS the user to confirm (not a hard stop). Deliberately using an old baseline is a judgment, acknowledged &amp; flagged.</td></tr>
+</table>
+<div class="warn"><strong>Config↔code coupling:</strong> a key listed in the code's <code>CONFIG_KEYS</code> is REQUIRED in the Config tab. If you add a key to the tab, add it to <code>CONFIG_KEYS</code> in <code>ingestion_v2.py</code> too (and vice-versa), or you get either a "missing key" hard error or an "unknown parameter (ignored)" warning. When deploying a code change that adds a key, commit the updated <code>configurations.xlsx</code> in the same push.</div>
+
+<h3>FC_Types tab</h3>
+<p>Lists ONLY non-ordinary FCs. Type must be exactly <code>IXD</code> or <code>IGNORE</code> (a typo like <code>IDX</code> stops the run). Every FC not listed is treated as an ordinary regional FC automatically — so this tab stays 2–3 rows (currently <code>BLR4=IXD</code>, <code>YSXA=IGNORE</code>).</p>
+
+<h3>Region_Splits tab</h3>
+<p>Declares a state whose stock is SENT to more than one destination region (e.g. MH → Bombay + Pune) while demand is still measured for the whole state. Exactly one region per split state must be marked DEFAULT (gets the full forecast); others start empty for manual filling. Validation enforces one-and-only-one DEFAULT and no orphaned FCs.</p>
+
+<h3>Demand_Map tab <span class="tag">v2.8</span></h3>
+<p>Maps demand states WITHOUT a local FC to the region that serves them (e.g. Kerala→Bangalore). Boundary rule: the registration handles "state with FC → itself" automatically; Demand_Map handles ONLY "state without FC → serving region." A row naming an FC state is an error. A demand state that is neither an FC state nor mapped becomes a named warning with its unit count (never a silent drop).</p>
+
+<h2 id="gates">6. The validation gates &amp; their philosophy</h2>
+<p>Design philosophy, consistent across the app: <strong>fail loud, fail specific, never guess; where a fact needs human judgment, stop and ask rather than assume.</strong> The app proceeds to planning only when hard errors are zero AND every interactive gate is answered. Gate order:</p>
+<pre><code>schema/reference errors  (hard stop)
+   -> FC-review gate      (interactive, v2.9)  unregistered FC holding stock
+   -> stock-vs-stock freshness  (hard stop)
+   -> sales-recency ack   (interactive, v2.9)  old sales window
+   -> workbook read       (hard stop on bad workbook)
+   -> ASIN judgment gate  (interactive)        one ASIN under 2+ SKUs
+   -> Calculate</code></pre>
+<table>
+<tr><th>Gate</th><th>Trigger</th><th>Resolution</th></tr>
+<tr><td>Strict SKU gate</td><td>A SKU in any Amazon file is absent from the master</td><td>HALT. Add the SKU to the master, commit, rerun. No partial plans.</td></tr>
+<tr><td>FC-review <span class="tag">v2.9</span></td><td>Ledger stock in an FC not in the registration + FC_Types (the MAA4/GST case)</td><td>Interactive: map-to-region / IXD / ignore / abort, + fulfillable? Per-run only; permanent fix = commit a refreshed registration PDF.</td></tr>
+<tr><td>Stock freshness</td><td>Stock-type file dates spread &gt; <code>freshness_tolerance_days</code></td><td>HALT. Refresh the stale stock file.</td></tr>
+<tr><td>Sales-recency <span class="tag">v2.9</span></td><td>Sales window ends &gt; <code>sales_recency_prompt_days</code> before stock date</td><td>Acknowledge &amp; proceed (flagged). Legitimate for deliberate baselines.</td></tr>
+<tr><td>ASIN judgment</td><td>An ASIN holds stock under 2+ SKUs (suppression episode)</td><td>Per-run: combine / only-active. Excluded-not-dropped for the stranded SKU.</td></tr>
+</table>
+
+<h2 id="maint">7. Maintenance scenarios</h2>
+<table>
+<tr><th>When this happens…</th><th>…the admin does this</th></tr>
+<tr><td>A <strong>new SKU</strong> starts selling</td><td>Add its row to <code>inventory_plan_template.xlsx</code> (SKU, ASIN, Units/Box, per-unit data), commit. Until then the strict gate halts any run containing it (by design).</td></tr>
+<tr><td>An <strong>unregistered FC</strong> shows stock (MAA4-style)</td><td>Short-term: the user answers the FC-review gate per run. Permanent: get the refreshed registration PDF from Seller Central, commit it in place — the gate then stops firing.</td></tr>
+<tr><td>A <strong>new FC</strong> appears in the registration</td><td>Nothing, usually — an ordinary regional FC is picked up automatically. Only if it's a cross-dock or warehouse does it need an FC_Types row.</td></tr>
+<tr><td>A <strong>new demand state without an FC</strong> appears (named warning)</td><td>Add a Demand_Map row (state → serving region), commit.</td></tr>
+<tr><td>Amazon <strong>reformats an export</strong></td><td>Ingestion locates columns by identity (header name, then content shape), so header renames/reorders survive. A change in a column's MEANING is caught by the known-answer FC check and, ultimately, a human. Re-run the golden harness to confirm.</td></tr>
+<tr><td>A <strong>Config number</strong> needs tuning (e.g. lower the noisy-rate floor)</td><td>Edit the value in the Config tab, commit. No code change, no redeploy needed beyond the auto-redeploy.</td></tr>
+<tr><td>A <strong>lead time</strong> changed</td><td>Lead times live in the daily stock workbook's Reference tab (per-run editable), not in config — the user updates it when filling the workbook.</td></tr>
+<tr><td>The <strong>output/template layout</strong> needs a column moved</td><td>Edit <code>inventory_plan_template.xlsx</code> in Excel and commit; the writer finds columns by header NAME, so it adapts with no code change (keep header text identical).</td></tr>
+</table>
+
+<h2 id="deep">8. Where the deep documentation &amp; tests live</h2>
+<ul>
+<li><strong>The contract:</strong> <code>Inventory_App_Redesign_Spec.md</code> (v2.9) — every design decision, section-numbered, changelog per version. Read this before changing behaviour; update it FIRST, then the code.</li>
+<li><strong>Regression testing:</strong> <code>golden_harness_v2.py</code> — run <code>python3 golden_harness_v2.py</code>. It rebuilds fixtures, runs the full pipeline on the sample July-2026 data, dumps <code>golden_out/golden_comparison.xlsx</code>, and asserts any values filled into its <code>GOLDEN</code> dict. After any engine change, run it and confirm the numbers hold.</li>
+<li><strong>Handover trail:</strong> the <code>HANDOVER_next_chat_*.md</code> series records how the build progressed and why each decision was made — useful archaeology when a choice looks puzzling.</li>
+</ul>
+<div class="note"><strong>Golden rule for any change:</strong> spec first → code → run the harness → commit. Never let the code and the spec diverge; the spec is what a future maintainer (or a fresh session) trusts.</div>
+
+<footer>Inventory Planning App v2 · Admin Guide · generated from the v2.9.1 codebase · replace-in-place, commit, done.</footer>
+</body></html>
