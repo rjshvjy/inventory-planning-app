@@ -41,6 +41,12 @@ def _buf(uploaded):
 
 # ------------------------------------------------------------------ sidebar
 with st.sidebar:
+    with st.expander("📖 Help & guides"):
+        st.markdown(
+            "- [User guide](https://rjshvjy.github.io/inventory-planning-app/"
+            "help_user.html) — how to run a plan, step by step\n"
+            "- [Admin guide](https://rjshvjy.github.io/inventory-planning-app/"
+            "help_admin.html) — architecture, config, maintenance")
     st.header("Amazon files (per run)")
     f_sales = st.file_uploader("Sales export (CSV)", type=["csv", "txt"])
     f_general = st.file_uploader("General stock — Manage FBA Inventory (CSV)",
