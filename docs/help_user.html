@@ -17,9 +17,14 @@ tr:nth-child(even){background:var(--grey)}
 .step{background:#eef6f8;border-left:4px solid var(--teal);padding:.6rem 1rem;margin:1rem 0;border-radius:0 4px 4px 0}
 .warn{background:#fff8e6;border-left:4px solid #d9a400;padding:.8rem 1rem;margin:1rem 0;border-radius:0 4px 4px 0}
 .tip{background:#eaf7ee;border-left:4px solid #2e8b57;padding:.8rem 1rem;margin:1rem 0;border-radius:0 4px 4px 0}
+.keypanel{background:#fdf3e3;border:2px solid #d9a400;border-radius:8px;padding:1rem 1.2rem;margin:1.3rem 0}
+.keypanel h3{margin-top:0;color:#8a5a00}
 .ui{display:inline-block;background:#fff;border:1.5px solid var(--teal);color:var(--teal);border-radius:6px;padding:.15rem .6rem;font-weight:600;font-size:.9em;margin:.1rem 0}
 .btn{display:inline-block;background:var(--teal);color:#fff;border-radius:6px;padding:.15rem .7rem;font-weight:600;font-size:.9em}
+.drop{display:inline-block;background:#fff;border:1.5px solid #888;border-radius:5px;padding:.1rem .5rem .1rem .5rem;font-size:.88em;color:#333}
+.drop::after{content:" \25BE";color:#888}
 .amber-chip{background:var(--amber);padding:.1rem .4rem;border-radius:3px}
+.gloss{font-style:italic;color:#4a5a60}
 .toc{background:var(--grey);border-radius:6px;padding:1rem 1.4rem}
 .toc a{color:var(--teal);text-decoration:none}.toc a:hover{text-decoration:underline}
 ol li{margin:.4rem 0}
@@ -27,86 +32,137 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);color:#
 </style></head><body>
 
 <h1>Inventory Planning App — User Guide</h1>
-<p>This is an online app that does <strong>two jobs</strong>: it <strong>partially automates your Daily Stock Report</strong>, and it <strong>automatically plans inventory restocking across regions</strong>. You drag-drop three Amazon files, fill in a little, and it hands back finished Excel files. This guide explains <em>every button and box on the screen</em>, in the order you meet them.</p>
+<p>This online app does <strong>two jobs</strong>: it <strong>partly fills in your Daily Stock Report</strong>, and it <strong>works out how much stock to send to each region</strong>. You drag-drop a few Amazon files, fill in a little, and it hands back finished Excel files. This guide explains <em>every button and box on the screen</em>, in the order you meet them.</p>
 
 <div class="toc"><strong>Contents</strong><br>
 <a href="#glance">1. How it works at a glance</a><br>
-<a href="#sidebar">2. The left sidebar — every control explained</a><br>
-<a href="#role1">3. Role 1 — Producing the Daily Stock Report</a><br>
-<a href="#role2">4. Role 2 — Generating the inventory plan</a><br>
-<a href="#questions">5. Questions the app may ask mid-way</a><br>
-<a href="#results">6. The results screen &amp; the downloaded plan</a><br>
-<a href="#errors">7. Common messages &amp; fixes</a></div>
+<a href="#order">2. Which file goes in which box — read this first</a><br>
+<a href="#sidebar">3. The left sidebar — every control explained</a><br>
+<a href="#role1">4. Job 1 — producing the Daily Stock Report</a><br>
+<a href="#role2">5. Job 2 — generating the inventory plan</a><br>
+<a href="#questions">6. Questions the app may ask, and every dropdown answer</a><br>
+<a href="#results">7. The results screen &amp; the downloaded plan</a><br>
+<a href="#errors">8. Common messages &amp; fixes</a></div>
 
 <h2 id="glance">1. How it works at a glance</h2>
 <ol>
-<li>Drag-drop <strong>3 files downloaded from Amazon</strong>, in their raw CSV format, into the matching boxes: the <strong>Sales report</strong> (have at least 30 days of sales in it), the <strong>Manage FBA Inventory</strong> CSV, and the <strong>Inventory Ledger</strong> (FC-wise stock).</li>
-<li>The app validates them and offers a file to download — that is your <strong>partially-filled Daily Stock Report</strong> (the "daily stock workbook").</li>
-<li>In that downloaded workbook, you only fill the <strong>In-transit</strong> and <strong>At the FC</strong> (received) tabs. The file completes itself — the Overall-stock report tab builds automatically. This finished file <em>is</em> your daily stock report.</li>
-<li>To get the restock plan: drag-drop the <strong>completed workbook</strong> into the app's <em>Daily stock workbook</em> box, set the <strong>days of inventory cover</strong> you want (bottom-left), leave other settings undisturbed, and click <span class="btn">🧮 Calculate plan</span>.</li>
-<li>The app validates everything and gives you the <strong>completed inventory planning file</strong> to download.</li>
+<li>Drag-drop <strong>3 files downloaded from Amazon</strong>, raw (unedited) CSVs, into their matching boxes: the <strong>Sales report</strong> (at least 30 days of sales in it), the <strong>Manage FBA Inventory</strong> file, and the <strong>Inventory Ledger</strong> (FC-wise stock).</li>
+<li>The app checks them and offers a file to download — your <strong>partly-filled Daily Stock Report</strong> (the "daily stock workbook").</li>
+<li>In that workbook you fill only the <strong>In-transit</strong> and <strong>At the FC</strong> tabs. The rest completes itself — the Overall-stock tab builds automatically. This finished file <em>is</em> your daily stock report.</li>
+<li>To get the restock plan: drop the <strong>completed workbook</strong> into the app's <em>Daily stock workbook</em> box, set the <strong>days of cover</strong> you want, leave the other settings alone, and click <span class="btn">🧮 Calculate plan</span>.</li>
+<li>The app checks everything and gives you the <strong>finished inventory planning file</strong> to download.</li>
 </ol>
 
-<h2 id="sidebar">2. The left sidebar — every control explained</h2>
+<h2 id="order">2. Which file goes in which box — read this first</h2>
+<p>There are <strong>four</strong> upload boxes, but they are not interchangeable, and the <strong>order you use them matters</strong>. Getting this right avoids the two most common frustrations.</p>
+<table>
+<tr><th>Box</th><th>What goes in it</th><th>When</th></tr>
+<tr><td><span class="ui">Sales export (CSV)</span></td><td>Amazon <em>Fulfilled Shipments</em> report, raw CSV</td><td>Always</td></tr>
+<tr><td><span class="ui">General stock — Manage FBA Inventory (CSV)</span></td><td>Amazon <em>Manage FBA Inventory</em> export, raw CSV</td><td>Always</td></tr>
+<tr><td><span class="ui">FC-wise stock — Inventory Ledger (CSV)</span></td><td>Amazon <em>Inventory Ledger (Detailed)</em>, raw CSV</td><td>Always</td></tr>
+<tr><td><span class="ui">Daily stock workbook (filled)</span></td><td>The Excel workbook the app itself generated, after you've filled and saved it</td><td>Only for planning (Job 2)</td></tr>
+</table>
+
+<div class="keypanel">
+<h3>⚠️ Upload the 3 Amazon files first — then the workbook</h3>
+<p><strong>Add the three Amazon CSVs first, wait for the green <span style="color:#2e8b57;font-weight:600">✅ Amazon files validated</span> banner, and only then add the filled workbook.</strong> Don't start by dropping the daily stock workbook in — the three Amazon files are what the app builds everything from, so it needs those in place first.</p>
+<p><strong>The daily stock workbook goes only in its own box</strong> (the fourth one), never in an Amazon box. The three Amazon boxes accept CSV files only, so an Excel workbook won't load there anyway — but keep them straight so you don't get puzzling errors.</p>
+<p><strong>Use a freshly-generated workbook, not an old one.</strong> The workbook you upload for planning must be the one you generated from <em>this</em> run's Amazon files, then filled and saved — not yesterday's file. An old workbook will be rejected (for example, its "Stock as of" date won't match).</p>
+</div>
+
+<div class="warn"><strong>If the screen seems to pause after an upload, it isn't stuck.</strong> The app re-reads everything each time you add a file, so a short spinner (up to ~30 seconds) is normal — especially right after you drop a file in. Give it a moment before clicking again.</div>
+
+<h2 id="sidebar">3. The left sidebar — every control explained</h2>
 <table>
 <tr><th>Control</th><th>What it does / when to touch it</th></tr>
-<tr><td><span class="ui">📖 Help &amp; guides</span></td><td>Top-left. Opens the links to this guide and the Admin guide.</td></tr>
-<tr><td><span class="ui">Sales export (CSV)</span></td><td>Drop Amazon's sales report here, raw CSV, unedited. Must cover at least 30 days of sales — shorter windows are rejected because the average would be unreliable.</td></tr>
+<tr><td><span class="ui">📖 Help &amp; guides</span></td><td>Top-left. Opens links to this guide and the Admin guide.</td></tr>
+<tr><td><span class="ui">Sales export (CSV)</span></td><td>Drop Amazon's sales report here, raw CSV, unedited. Must cover at least 30 days — shorter windows make the daily average unreliable, so the app warns.</td></tr>
 <tr><td><span class="ui">General stock — Manage FBA Inventory (CSV)</span></td><td>Drop the Manage FBA Inventory export here. Gives the app your national stock totals.</td></tr>
-<tr><td><span class="ui">FC-wise stock — Inventory Ledger (CSV)</span></td><td>Drop the Inventory Ledger (Detailed view) here. Tells the app which warehouse holds what. Its data date becomes the plan's anchor date.</td></tr>
-<tr><td><span class="ui">Daily stock workbook (filled)</span></td><td>Only needed for Role 2 (planning). Drop your COMPLETED daily stock workbook here — the one you downloaded, filled and saved.</td></tr>
-<tr><td><span class="ui">Days of cover to plan for</span></td><td>Bottom-left, the one setting you routinely use. How many days of sales each region should be stocked for, on top of shipping lead time. 30 is the usual choice. Bigger number = bigger shipments.</td></tr>
-<tr><td><span class="ui">Sales window days (only if the sales file has no date column)</span></td><td>Leave at 0 normally — the app reads the dates inside your sales file and works out the period itself. Use this ONLY if your sales file has no usable dates (e.g. a pre-totalled report): type how many days it covers (a 90-day summary → type 90).</td></tr>
-<tr><td><span class="ui">Override repo reference files (optional)</span></td><td>An expander for rare cases. The app's three standing files (configurations, master template, FC registration) load automatically from storage. If an admin gives you a corrected copy to test before it's made permanent, drop it here — the uploaded copy is used for this run only. If you don't know why you'd need this, you don't need this.</td></tr>
+<tr><td><span class="ui">FC-wise stock — Inventory Ledger (CSV)</span></td><td>Drop the Inventory Ledger (Detailed view) here. Tells the app which warehouse holds what. <span class="gloss">The date on this file becomes the plan's "as of" date — all the timing maths counts from it, not from today.</span></td></tr>
+<tr><td><span class="ui">Daily stock workbook (filled)</span></td><td>Only for Job 2 (planning). Drop your <strong>completed</strong> daily stock workbook here — the one you downloaded, filled, and saved.</td></tr>
+<tr><td><span class="ui">Days of cover to plan for</span></td><td>The one setting you routinely use. How many days of sales each region should be stocked for, <em>on top of</em> shipping time. 30 is the usual choice. Bigger number = bigger shipments.</td></tr>
+<tr><td><span class="ui">Sales window days (only if the sales file has no date column)</span></td><td>Leave at <strong>0</strong> normally — the app reads the dates inside your sales file and works out the period itself. Use this <em>only</em> if your sales file has no usable dates (e.g. a pre-totalled report): type how many days it covers (a 90-day summary → type 90). It does <em>not</em> shorten or choose your analysis window; to plan on a different period, upload a sales file covering that period.</td></tr>
+<tr><td><span class="ui">Override repo reference files (optional)</span></td><td>An expander for rare cases. The app's three standing files (configurations, master template, FC registration) load automatically. If an admin gives you a corrected copy to test before it's made permanent, drop it here — it's used for this run only. If you don't know why you'd need this, you don't.</td></tr>
 </table>
 
-<h2 id="role1">3. Role 1 — Producing the Daily Stock Report</h2>
-<div class="step"><strong>Step 1.</strong> Drop the three Amazon CSVs into their boxes. The app validates immediately and shows three counters — <em>Errors / Warnings / Checks noted</em>. Errors are shown in red with exactly what to fix; with zero errors you get <strong>✅ Amazon files validated</strong>.</div>
-<div class="step"><strong>Step 2.</strong> Open the <span class="ui">Need a fresh daily stock workbook?</span> section that appears after validation. Keep <span class="ui">Prefill Current stock from today's ledger</span> ticked (it copies your live stock in so you don't type it), and click <span class="btn">⬇️ Generate &amp; download fresh workbook</span>.</div>
-<div class="step"><strong>Step 3.</strong> Open the downloaded workbook in Excel and fill only two tabs:
-<ul><li><strong>In-transit</strong> — one row per shipment line. Pick <em>Destination</em>, <em>Mode</em> and <em>SKU</em> from the <strong>dropdowns</strong>; type Quantity and Cargo-ready date; fill the Actual-reach date when known.</li>
-<li><strong>At the FC</strong> — shipments being checked in at a warehouse: pick Destination and SKU from dropdowns, enter Shipped and Received quantities.</li></ul>
-Also glance at the <strong>Reference</strong> tab's lead-times and correct any that changed. The <strong>Overall stock</strong> tab fills itself — that completed file <em>is</em> your Daily Stock Report.</div>
-<div class="warn"><strong>Always pick from the dropdowns — never type region names.</strong> The Destination cells only accept the exact names the app knows (like <code>Delhi (DL)</code>). Typing <code>DELHI</code> gets rejected by the cell itself. Dates display Indian-style: <code>07-Jul-2026</code>.</div>
+<h2 id="role1">4. Job 1 — producing the Daily Stock Report</h2>
+<div class="step"><strong>Step 1.</strong> Drop the three Amazon CSVs into their boxes. The app checks them immediately and shows three counters — <em>Errors / Warnings / Checks noted</em>. Errors are red with exactly what to fix; with zero errors you get <strong>✅ Amazon files validated</strong>.</div>
+<div class="step"><strong>Step 2.</strong> Open the <span class="ui">Need a fresh daily stock workbook?</span> section that appears after validation. Keep <span class="ui">Prefill Current stock from today's ledger</span> ticked (it copies your live stock in so you don't retype it) and click <span class="btn">⬇️ Generate &amp; download fresh workbook</span>.</div>
+<div class="step"><strong>Step 3.</strong> Open the downloaded workbook in Excel. First, on the <strong>Current stock</strong> tab, set the <span class="ui">Stock as of (date)</span> cell to the date of your Amazon data <span class="gloss">(usually about 2 days behind today — that's normal)</span>. Then fill only two tabs:
+<ul>
+<li><strong>In-transit</strong> — one row per SKU per shipment (repeat the Shipment ID on every row). Pick <em>Destination</em>, <em>Mode</em> and <em>SKU</em> from the <strong>dropdowns</strong>; type Quantity and Cargo-ready date; fill the <em>Actual reach date</em> when you know it.</li>
+<li><strong>At the FC</strong> — shipments arriving and being checked in: pick Destination and SKU from dropdowns, and enter the <em>Shipped</em> and <em>Received</em> quantities as numbers.</li>
+</ul>
+Glance at the <strong>Reference</strong> tab's lead-times and correct any that have changed. The <strong>Overall stock</strong> tab fills itself — that completed file <em>is</em> your Daily Stock Report.</div>
 
-<h2 id="role2">4. Role 2 — Generating the inventory plan</h2>
-<div class="step"><strong>Step 1.</strong> With the three Amazon CSVs uploaded (same as Role 1), also drop your <strong>completed workbook</strong> into <span class="ui">Daily stock workbook (filled)</span>.</div>
-<div class="step"><strong>Step 2.</strong> Set <span class="ui">Days of cover to plan for</span>. Leave every other setting undisturbed.</div>
-<div class="step"><strong>Step 3.</strong> Answer anything the app asks (§5 — most runs ask nothing), then click <span class="btn">🧮 Calculate plan</span>.</div>
-<div class="step"><strong>Step 4.</strong> Review the on-screen results (§6) and click <span class="btn">⬇️ Download plan workbook</span>. That's your completed inventory planning file.</div>
-
-<h2 id="questions">5. Questions the app may ask mid-way</h2>
-<p>The app never guesses on business judgment — when it needs yours, it pauses and asks on-screen:</p>
+<h3>The dropdowns inside the workbook — what each one means</h3>
 <table>
-<tr><th>The question</th><th>What it means &amp; how to answer</th></tr>
-<tr><td><strong>FC review needed</strong> — "MAA4 holds 36 sellable units but is not in the registration file"</td><td>A warehouse holds your stock but isn't in Amazon's registration list (often a temporary GST/registration issue). Two dropdowns appear: (1) how to treat it — normally <em>Map to a region</em>, then pick which region serves it (for MAA4: Chennai (TN)); (2) whether its stock is currently <em>Fulfillable</em> (can ship to customers — the default) or <em>Not fulfillable</em> (physically there but frozen — it will be shown but not counted). Your answer applies to this run only; once Amazon re-registers the FC and the registration file is refreshed, the question disappears for good.</td></tr>
-<tr><td><strong>Sales-window recency</strong> — "sales window ends …, stock is as of … — proceed?"</td><td>Your sales data is much older than your stock data (beyond the configured limit, normally 60 days). Sometimes that's deliberate — e.g. planning on last season's pattern. Tick the confirmation box to proceed; the choice is noted in the output.</td></tr>
-<tr><td><strong>ASIN judgment</strong> — a product holds stock under two SKUs</td><td>Happens during a listing suppression, when Amazon creates a temporary SKU for the same product. Choose <em>Combine</em> (suppression will lift soon — count both SKUs' stock) or <em>Only active</em> (long suppression — count only the live SKU; the other's stock is shown as excluded, not lost).</td></tr>
+<tr><th>Dropdown</th><th>Choices &amp; what they mean</th></tr>
+<tr><td><span class="drop">Destination (region)</span></td><td>The region a shipment is going to (e.g. <code>Delhi (DL)</code>, <code>Bombay (MH)</code>, <code>Pune (MH)</code>, or <code>BLR4 IXD</code>). Always pick from the list — the cell only accepts the exact names the app knows. <span class="gloss">BLR4 IXD is a cross-dock hub (a place Amazon uses to redistribute stock onward), not a normal region.</span></td></tr>
+<tr><td><span class="drop">Mode</span></td><td><strong>ATS</strong> = Amazon Transportation Service (Amazon collects and carries it). <strong>Self</strong> = you arrange the transport. This changes the <em>suggested</em> reach date only: for <strong>ATS</strong>, suggested reach = cargo-ready date + that region's lead days; for <strong>Self</strong>, suggested reach = the cargo-ready date (you ship early to make the appointment). The suggestion is advice — the app reads the <em>Actual reach date</em> you commit.</td></tr>
+<tr><td><span class="drop">SKU</span></td><td>The product code, picked from your master list so it always matches. The Product name fills in automatically next to it.</td></tr>
+</table>
+<div class="warn"><strong>Always pick from the dropdowns — never type region names.</strong> The Destination cells only accept the exact names the app knows (like <code>Delhi (DL)</code>). Dates display Indian-style: <code>07-Jul-2026</code>. Leave the <em>Actual reach date</em> and it stays red until filled — the app won't accept the file without it.</div>
+
+<h2 id="role2">5. Job 2 — generating the inventory plan</h2>
+<div class="step"><strong>Step 1.</strong> With the three Amazon CSVs uploaded and validated (as in Job 1), drop your <strong>completed</strong> workbook into <span class="ui">Daily stock workbook (filled)</span>.</div>
+<div class="step"><strong>Step 2.</strong> Set <span class="ui">Days of cover to plan for</span>. Leave every other setting alone.</div>
+<div class="step"><strong>Step 3.</strong> Answer anything the app asks (§6 — most runs ask nothing), then click <span class="btn">🧮 Calculate plan</span>.</div>
+<div class="step"><strong>Step 4.</strong> Review the on-screen results (§7) and click <span class="btn">⬇️ Download plan workbook</span>. That's your finished inventory planning file.</div>
+
+<h2 id="questions">6. Questions the app may ask, and every dropdown answer</h2>
+<p>The app never guesses on business judgment. When it needs yours, it pauses and asks on-screen. Here is every question and exactly what each answer does.</p>
+
+<h3>FC review — "MAA4 holds 36 sellable units but is not in the registration file"</h3>
+<p>A warehouse (FC) is holding your stock but isn't in Amazon's registration list — often a temporary GST/registration issue. You get two dropdowns. The first asks <em>how to treat it this run</em>:</p>
+<table>
+<tr><th>Choice</th><th>What it does / when to pick it</th></tr>
+<tr><td><span class="drop">Map to a region</span></td><td><strong>The normal choice.</strong> Treat this FC as part of a region you pick, so its stock counts as supply there. A second dropdown appears to choose which region serves it (for MAA4: <code>Chennai (TN)</code>).</td></tr>
+<tr><td><span class="drop">Treat as IXD cross-dock</span></td><td>Rare. Only if the FC genuinely just redistributes stock onward rather than serving customers. If unsure, this is not it.</td></tr>
+<tr><td><span class="drop">Ignore</span></td><td>Show the stock but never count it in planning. Use when the stock is real but you don't want it influencing this plan.</td></tr>
+<tr><td><span class="drop">Abort</span></td><td>Stop the run so you can fix the registration file instead. Pick this if you'd rather resolve it permanently now.</td></tr>
+</table>
+<p>When you choose <em>Map to a region</em>, a second dropdown asks whether the stock is <strong>fulfillable</strong>:</p>
+<table>
+<tr><td><span class="drop">Fulfillable</span></td><td><strong>The default.</strong> The stock can ship to customers, so count it as supply.</td></tr>
+<tr><td><span class="drop">Not fulfillable</span></td><td>The stock is physically there but frozen (e.g. GST-blocked). It's shown but <em>not</em> counted in the plan.</td></tr>
+</table>
+<div class="tip">Your answer applies to <strong>this run only</strong>. Once Amazon re-registers the FC and the registration file is refreshed, this question disappears for good.</div>
+
+<h3>Sales-window recency — "sales window ends …, stock is as of … — proceed?"</h3>
+<p>Your sales data is much older than your stock data (beyond the configured limit, normally 60 days). Sometimes that's deliberate — e.g. planning on last season's pattern. <strong>Tick the confirmation box to proceed</strong>; the choice is noted in the output, and the Sales-velocity tab shows the exact rates being applied. <span class="gloss">"Velocity" just means daily sales rate.</span></p>
+
+<h3>ASIN judgment — a product holds stock under two SKUs</h3>
+<p>This happens during a listing suppression, when Amazon creates a temporary SKU for the same product. <span class="gloss">One product (one ASIN) then wears two SKU codes.</span> Choose per product:</p>
+<table>
+<tr><td><span class="drop">Combine</span></td><td>The suppression will lift soon — count both SKUs' stock together.</td></tr>
+<tr><td><span class="drop">Only active</span></td><td>Long suppression — count only the live SKU's stock; the other SKU's stock is shown as excluded (not lost, just held aside this run).</td></tr>
 </table>
 
-<h2 id="results">6. The results screen &amp; the downloaded plan</h2>
-<p><strong>On screen</strong> after Calculate: four headline numbers (units planned, demand covered, demand excluded, stockout warnings); any yellow notices (e.g. "this run uses a per-run FC mapping"); <em>Region priorities</em> (which regions need attention first, Pri-1 = most urgent); the <em>Sales velocity vs plan</em> table; the full plan grid; and expanders for line-by-line details, stockout warnings and run information.</p>
+<h2 id="results">7. The results screen &amp; the downloaded plan</h2>
+<p><strong>On screen</strong> after Calculate: four headline numbers (units planned, demand covered, demand excluded, stockout warnings); any yellow notices; <em>Region priorities</em> (which regions need attention first — Pri-1 = most urgent); the <em>Sales velocity vs plan</em> table; the full plan grid; and expanders for line-by-line detail, stockout warnings, and run information.</p>
 <p><strong>The downloaded Excel</strong> has five tabs:</p>
 <table>
 <tr><th>Tab</th><th>Use it for</th></tr>
 <tr><td><strong>README</strong></td><td>A short orientation note.</td></tr>
 <tr><td><strong>Appointment plan</strong></td><td>THE deliverable — units to ship per product per region, with priorities. Act on this.</td></tr>
-<tr><td><strong>Stock snapshot</strong></td><td>Your current / in-transit / at-FC stock copied in for cross-checking while you work.</td></tr>
+<tr><td><strong>Stock snapshot</strong></td><td>Your current / in-transit / at-FC stock copied in, so you can cross-check while you work.</td></tr>
 <tr><td><strong>Calculation_Details</strong></td><td>Every number behind every quantity — daily sales, stock parts, rounding, flags. The "why is it 32?" tab. Rows are shaded in groups per product.</td></tr>
-<tr><td><strong>Sales velocity</strong></td><td>Per product per region: <em>Plan qty | sales Velocity/day | Days cover</em>, side by side, region blocks separated by border lines, totals at the end.</td></tr>
+<tr><td><strong>Sales velocity</strong></td><td>Per product per region: <em>Plan qty | Velocity/day | Days cover</em>, side by side, region blocks separated by lines, totals at the end.</td></tr>
 </table>
-<div class="tip"><strong>Days-cover higher than your setting is normal</strong> — full cartons buy extra days, and regions already holding stock show their true (large) coverage. <strong>But <span class="amber-chip">amber</span> cells on the Sales-velocity tab mean possible OVERSTOCK</strong> — coverage far above your setting (more than 1.5×). That's the app pointing at stock piling up against slow sales; review before shipping more there.</div>
+<div class="tip"><strong>Days-cover higher than your setting is normal</strong> — full cartons buy extra days, and regions already holding stock show their true (large) coverage. <strong>But <span class="amber-chip">amber</span> cells on the Sales-velocity tab mean possible OVERSTOCK</strong> — coverage more than 1.5× your setting. That's the app pointing at stock piling up against slow sales; review before shipping more there.</div>
 
-<h2 id="errors">7. Common messages &amp; fixes</h2>
+<h2 id="errors">8. Common messages &amp; fixes</h2>
 <table>
 <tr><th>Message</th><th>Fix</th></tr>
 <tr><td>"contains SKU(s) not in the master template"</td><td>A new product isn't in the master list yet. An admin must add it (with its box size) to the master file — see the Admin guide. The app never guesses box sizes.</td></tr>
-<tr><td>"Destination '…' is not a known region"</td><td>A workbook destination doesn't match a known region. Re-pick it from the dropdown. (Common city names are auto-corrected in current versions, but the dropdown is the safe way.)</td></tr>
-<tr><td>"effective dates are N days apart … refresh the stale file"</td><td>Your stock files are from different dates. Re-download them for the same date and re-upload.</td></tr>
+<tr><td>"the 'Stock as of' date (cell B1) is blank"</td><td>Open the workbook's Current-stock tab and set the "Stock as of" date to your Amazon data's date, save, and re-upload.</td></tr>
+<tr><td>"'Actual reach date' is …" (blank/unreadable)</td><td>Every In-transit row needs a committed Actual reach date. Fill the red cells, save, re-upload.</td></tr>
+<tr><td>"Destination '…' is not a known region"</td><td>A workbook destination doesn't match a known region. Re-pick it from the dropdown. (Common city names are auto-corrected, but the dropdown is the safe way.)</td></tr>
 <tr><td>"Sales window: only N days … below the 30-day minimum"</td><td>Your sales file covers too short a period for a reliable average. Use a report covering at least 30 days.</td></tr>
 <tr><td>"Validation failed — nothing was planned"</td><td>Fix the red items listed above it and rerun. The app deliberately refuses to plan on faulty data.</td></tr>
 </table>
 <div class="tip">Every stop names exactly what's wrong and what to do. Fix that one thing, rerun. The app is built to guide, not puzzle.</div>
 
-<footer>Inventory Planning App v2 · User Guide · two roles, one workbook: keep it current, plan weekly.</footer>
+<footer>Inventory Planning App v2 · User Guide · two jobs, one workbook: keep it current, plan weekly.</footer>
 </body></html>
