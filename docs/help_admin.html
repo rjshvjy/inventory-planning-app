@@ -156,10 +156,16 @@ pdfplumber</code></pre>
 <li><strong>At-FC pending</strong> — units physically at the FC but not yet received, counted at day 0 and flagged. <code>pending = shipped − received</code>; <strong>received is never re-counted</strong> because it is already inside Current stock.</li>
 </ul></div>
 
-<div class="step"><span class="lbl">STEP 4</span><strong>Redistribute the cross-dock stock.</strong> <span style="color:#667">(<code>calculation.apply_ixd</code>)</span>
-<p>Stock at the <a class="g" href="#g-ixd">BLR4 IXD</a> hub has no region of its own; Amazon spreads it to regional FCs. The engine splits each ASIN's hub stock across its demand regions in proportion to each region's daily rate, scaled by <a class="g" href="#g-ixdconf">ixd_confidence</a>. If an ASIN has no demand anywhere, its hub stock stays put.</p>
-<div class="formula">ixd_offset(region) = <b>hub_qty × ixd_confidence × daily(region) ÷ Σ daily(all regions)</b></div>
-<p>In the stockout sim this offset is treated as arriving after <code>ixd_transfer_days</code>.</p></div>
+<div class="step"><span class="lbl">STEP 4</span><strong>Place the cross-dock stock — the user's per-run bet.</strong> <span style="color:#667">(<code>calculation.apply_ixd</code>, v2.9.2)</span>
+<p>Stock at the <a class="g" href="#g-ixd">BLR4 IXD</a> hub will be moved by Amazon on its own logic — unpredictably (it may spread sensibly, or dump a whole consignment into one region for its own warehouse-utilisation or transport-cost reasons). So when the hub holds stock, the app <strong>pauses at a runtime gate</strong> and the user chooses the placement assumption for this run, <strong>defaulting to Abort</strong> (produce no plan; replan once the movement appears as a real In-transit line):</p>
+<ul>
+<li><strong>Abort</strong> — stop; no plan. The safest choice when placement is a coin-toss.</li>
+<li><strong>Rational</strong> — credit each needy region in proportion to its <em>shortfall</em> share.</li>
+<li><strong>Single</strong> — per SKU, credit 100% to the largest-shortfall region, uncapped.</li>
+<li><strong>Two</strong> — per SKU, split across the top-two shortfall regions in proportion to their shortfalls, uncapped; collapses to Single when only one region is short.</li>
+</ul>
+<div class="formula">shortfall = <b>daily × (lead + days_of_cover) − (current + in-transit + at-FC)</b>   (signed; all-surplus → "least overstocked" ranks first)</div>
+<p>No caps: a region can be credited past its need — deliberately, to mimic real IXD dumps. Credited units count at <strong>day 0</strong> in the stockout sim (no arrival model); the <em>real</em> dispatch re-enters as an ordinary In-transit row next run. Every credited line is flagged <code>IXD_ASSUMED(qty under 'option')</code> and a run banner names the choice. If an ASIN has no plannable region (or Rational finds no shortfall), its hub stock stays uncredited, noted.</p></div>
 
 <div class="step"><span class="lbl">STEP 5</span><strong>Compute the raw requirement.</strong> <span style="color:#667">(<code>calculation.raw_requirements</code>)</span>
 <p>Only regions that have a lead time are planned. Forecast the depletion over lead + cover, subtract everything available, floor at zero.</p>
@@ -183,7 +189,7 @@ available   = current + in_transit_counted + at_fc_pending + ixd_offset
 <div class="formula">days_cover_achieved = <b>(current + in_transit + at_fc_pending + ixd_offset + qty) ÷ daily − lead</b></div></div>
 
 <div class="step"><span class="lbl">STEP 7</span><strong>Sanity-check with a day-by-day stockout walk.</strong> <span style="color:#667">(<code>calculation.simulate_stockouts</code>)</span>
-<p>Using the <em>rounded</em> quantities, walk each region day by day across the horizon. Start with <code>current + at_fc_pending</code>; add in-transit on its committed day, the IXD offset on <code>ixd_transfer_days</code>, and the planned shipment on the region's lead day; subtract the daily rate each day. Flag a stockout only if the shortfall drops below <code>−min_stockout_deficit_units</code> (the threshold kills sub-unit noise).</p></div>
+<p>Using the <em>rounded</em> quantities, walk each region day by day across the horizon. Start with <code>current + at_fc_pending + ixd_offset</code> (credited IXD counts at day 0 — the credit is a bet that the stock is effectively placed this run, v2.9.2); add in-transit on its committed day and the planned shipment on the region's lead day; subtract the daily rate each day. Flag a stockout only if the shortfall drops below <code>−min_stockout_deficit_units</code> (the threshold kills sub-unit noise).</p></div>
 
 <div class="step"><span class="lbl">STEP 8</span><strong>Tag urgency (priorities).</strong> <span style="color:#667">(<code>calculation.compute_priorities</code>)</span>
 <p>Per line, "risk" is how many days short of the lead time the current stock will run:</p>
@@ -252,14 +258,12 @@ Pri-3 if risk ≥ −3   ·   Pri-4 otherwise   (daily = 0 → Pri-4)</div>
 
 <h2 id="config">7. Configuration reference</h2>
 <p><code>configurations.xlsx</code> is validated on load; a bad edit (blank number, unknown FC type, a split with zero or two DEFAULTs, an orphaned FC, an FC-state row in Demand_Map) fails loud with a named error and stops the run.</p>
-<h3>Config tab — the seven tunable numbers</h3>
+<h3>Config tab — the five tunable numbers</h3>
 <table>
 <tr><th>Key</th><th>Default</th><th>What it does / when to touch it</th></tr>
 <tr><td><code>days_cover_ceiling</code></td><td>45</td><td>Slow-mover guard. If one full carton would last more than this many days at a location's rate, the app ships a partial box (<a class="g" href="#g-tier">Tier-2</a>) instead of forcing the carton. Raise it to allow bigger single cartons; lower it to trim slow movers harder.</td></tr>
 <tr><td><code>min_sales_window_days</code></td><td>30</td><td>Hard floor on sales-window length, for both date-inferred and override windows. Below it the daily rate is statistically noisy → a warning. Lower it only if you knowingly plan on short windows.</td></tr>
 <tr><td><code>freshness_tolerance_days</code></td><td>3</td><td>Max spread among stock-type file dates (ledger / general / workbook). Beyond it → hard stop, because a stock picture assembled from different moments is corrupt.</td></tr>
-<tr><td><code>ixd_transfer_days</code></td><td>5</td><td>Assumed days for <a class="g" href="#g-ixd">BLR4 IXD</a> stock to reach a regional FC after Amazon redistributes it. Times when the IXD offset "arrives" in the stockout sim.</td></tr>
-<tr><td><code>ixd_confidence</code></td><td>1.0</td><td>A 0–1 dial on how much of the cross-dock stock to <em>count</em> as regional supply. <strong>1.0 = trust the redistribution fully</strong> (count all of it); <strong>0 = ignore hub stock for planning</strong> (treat it as informational only); 0.5 counts half. Lower it if hub stock often fails to arrive in time.</td></tr>
 <tr><td><code>min_stockout_deficit_units</code></td><td>1</td><td>Stockout warnings smaller than this many units are suppressed, so you don't drown in sub-unit noise.</td></tr>
 <tr><td><code>sales_recency_prompt_days</code> <span class="tag">v2.9</span></td><td>60</td><td>If the sales window ends more than this many days before the stock date, the app <em>asks</em> you to confirm (not a hard stop) — deliberately planning on an old baseline is a judgment you own, acknowledged and flagged.</td></tr>
 </table>
@@ -296,6 +300,7 @@ Pri-3 if risk ≥ −3   ·   Pri-4 otherwise   (daily = 0 → Pri-4)</div>
    -> stock-vs-stock freshness (hard stop)
    -> sales-recency ack        (interactive, v2.9)  old sales window
    -> workbook read            (hard stop on a bad workbook)
+   -> IXD placement gate       (interactive, v2.9.2) stock at the BLR4 hub
    -> ASIN judgment gate       (interactive)        one ASIN under 2+ SKUs
    -> Calculate</code></pre>
 <table>
@@ -304,6 +309,7 @@ Pri-3 if risk ≥ −3   ·   Pri-4 otherwise   (daily = 0 → Pri-4)</div>
 <tr><td>FC-review <span class="tag">v2.9</span></td><td>Ledger stock in an FC not in the registration + FC_Types (the MAA4/GST case)</td><td>Interactive: map-to-region / IXD / ignore / abort, + fulfillable? Per-run only; permanent fix = commit a refreshed registration PDF.</td></tr>
 <tr><td>Stock freshness</td><td>Stock-file dates spread &gt; <code>freshness_tolerance_days</code></td><td>HALT. Refresh the stale stock file.</td></tr>
 <tr><td>Sales-recency <span class="tag">v2.9</span></td><td>Sales window ends &gt; <code>sales_recency_prompt_days</code> before the stock date</td><td>Acknowledge &amp; proceed (flagged). Legitimate for deliberate baselines.</td></tr>
+<tr><td>IXD placement <span class="tag">v2.9.2</span></td><td>BLR4 holds stock for one or more SKUs</td><td>Interactive, per-run, <strong>Abort default</strong>: Abort (no plan) / rational shortfall split / dump into single neediest / split across two neediest. Credited lines flagged <code>IXD_ASSUMED</code>.</td></tr>
 <tr><td>ASIN judgment</td><td>An ASIN holds stock under 2+ SKUs (<a class="g" href="#g-suppression">suppression</a> episode)</td><td>Per-run: combine / only-active. The stranded SKU is excluded-not-dropped.</td></tr>
 </table>
 
@@ -336,7 +342,7 @@ Pri-3 if risk ≥ −3   ·   Pri-4 otherwise   (daily = 0 → Pri-4)</div>
 <dt id="g-fc">FC (fulfilment centre)</dt><dd>An Amazon warehouse. Each FC belongs to a state; FCs in a state are pooled into one planning region with one lead time.</dd>
 <dt id="g-horizon">Horizon</dt><dd>The planning window for a region: <code>lead + days_of_cover</code> days from the anchor date. In-transit stock only counts if it lands inside this window.</dd>
 <dt id="g-ixd">IXD / cross-dock (BLR4)</dt><dd>An inbound cross-dock hub that holds no demand of its own; Amazon redistributes its stock to regional FCs. Counted in grand-total on-hand and split proportionally into regional supply, but never a shipping destination.</dd>
-<dt id="g-ixdconf">IXD confidence</dt><dd>A 0–1 setting for how much of the hub's stock to trust as usable regional supply. 1.0 = count it all; 0 = ignore it for planning. See <code>ixd_confidence</code> in §7.</dd>
+<dt id="g-ixdconf">IXD placement assumption</dt><dd>The per-run choice (v2.9.2 gate) of how to model Amazon's unpredictable hub redistribution: Abort (default — don't plan on it), rational shortfall split, dump into the single neediest region, or split across the two neediest. Replaced the old <code>ixd_confidence</code>/<code>ixd_transfer_days</code> config keys.</dd>
 <dt id="g-reach">Reach date</dt><dd>The committed date an in-transit shipment is expected to land at its FC — the only in-transit date the app reads. The workbook <em>suggests</em> one; the human commits the actual.</dd>
 <dt id="g-split">Split state / DEFAULT region</dt><dd>A state whose stock is sent to two destination regions (e.g. MH → Bombay + Pune) while demand is still measured for the whole state. Exactly one region is the DEFAULT and receives the full forecast; the other starts empty for manual filling.</dd>
 <dt id="g-suppression">Suppression / Temp-SKU</dt><dd>When Amazon suppresses a listing, a temporary SKU is created under the same ASIN. Sales are always pooled; whether to also pool the two SKUs' <em>stock</em> is the per-run "combine / only-active" judgment.</dd>

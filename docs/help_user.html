@@ -132,6 +132,17 @@ Glance at the <strong>Reference</strong> tab's lead-times and correct any that h
 <h3>Sales-window recency — "sales window ends …, stock is as of … — proceed?"</h3>
 <p>Your sales data is much older than your stock data (beyond the configured limit, normally 60 days). Sometimes that's deliberate — e.g. planning on last season's pattern. <strong>Tick the confirmation box to proceed</strong>; the choice is noted in the output, and the Sales-velocity tab shows the exact rates being applied. <span class="gloss">"Velocity" just means daily sales rate.</span></p>
 
+<h3>IXD stock at BLR4 — "how should this run treat it?"</h3>
+<p>Some of your stock is sitting at the <strong>BLR4 cross-dock</strong> — a hub Amazon uses to redistribute stock onward to regional warehouses. <span class="gloss">Where Amazon will send it is unpredictable: sometimes spread sensibly, sometimes the whole lot dumped into one region.</span> Planning on that stock is therefore a bet, so the app pauses, shows you how many units and products are involved, and asks you to choose. As you pick each option, a plain explanation of exactly what it will do (with a live example from your own data) appears below the dropdown.</p>
+<table>
+<tr><th>Choice</th><th>What it does / when to pick it</th></tr>
+<tr><td><span class="drop">IXD inbound — unpredictable. Abort</span></td><td><strong>The default and the safe choice.</strong> Stops the run — no plan file. Come back in a few days: once Amazon dispatches the stock, enter that shipment on the workbook's <strong>In-transit</strong> tab (destination + reach date) and rerun; the plan then counts it in the right place at the right time.</td></tr>
+<tr><td><span class="drop">Assume proper allocation</span></td><td>Bets that Amazon spreads each product across the regions that are short of it, in proportion to how short each one is. Your shipments to those regions shrink accordingly. Risk: if Amazon actually dumps it all in one place, the other regions can run out.</td></tr>
+<tr><td><span class="drop">Dump into single neediest region</span></td><td>Bets that Amazon sends each product's entire hub stock to the ONE region that needs it most — even past what it needs. That region gets little or nothing from you; every other region is planned as if it receives none.</td></tr>
+<tr><td><span class="drop">Split across two neediest regions</span></td><td>Bets that Amazon splits each product between its TWO neediest regions, in proportion to how short each is (uncapped — one may end up overstocked). If only one region is short, everything is assumed to go there.</td></tr>
+</table>
+<div class="tip">Whatever you choose is recorded in the plan, and every affected line is flagged <code>IXD_ASSUMED</code> in Calculation_Details — so you can always see which quantities were a bet. When in doubt, Abort and replan in a few days.</div>
+
 <h3>ASIN judgment — a product holds stock under two SKUs</h3>
 <p>This happens during a listing suppression, when Amazon creates a temporary SKU for the same product. <span class="gloss">One product (one ASIN) then wears two SKU codes.</span> Choose per product:</p>
 <table>
