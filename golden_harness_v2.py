@@ -79,6 +79,12 @@ OLD_TO_NEW_LABELS = {   # window-3 discovery D1: July-7 workbook label style
     "LUCKNOW": "Lucknow (UP)",
 }
 PUNE_LEAD_DAYS = 10     # fixture guess = Bombay's lead; CONFIRM WITH USER (D1)
+IXD_PLACEMENT = "rational"   # v2.9.2 gate choice for the harness run:
+                             # rational | single | two ("abort" = no plan)
+SEED_BLR4 = {}               # e.g. {"ses-gl-1ltr": 50} — F4 fixture: put hub
+                             # stock into the workbook's Current-stock BLR4
+                             # column so the IXD gate paths are exercisable
+                             # (July-7 sample has ZERO BLR4 stock).
 
 
 # ----------------------------------------------------------------- fixtures
@@ -137,10 +143,18 @@ def make_translated_workbook(uploads: Path, out: Path) -> Path:
         ws.cell(last + 1, 2, PUNE_LEAD_DAYS)
 
     cs = wb["Current stock"]
+    blr4_col = None
     for c in range(1, cs.max_column + 1):
         v = cs.cell(2, c).value
         if v in OLD_TO_NEW_LABELS:
             cs.cell(2, c, OLD_TO_NEW_LABELS[v])
+        if isinstance(v, str) and "BLR4" in v.upper():
+            blr4_col = c
+    if SEED_BLR4 and blr4_col:                 # F4 (v2.9.2): seed hub stock
+        for r in range(3, cs.max_row + 1):
+            sku = cs.cell(r, 1).value
+            if sku in SEED_BLR4:
+                cs.cell(r, blr4_col, SEED_BLR4[sku])
 
     for tab in ("In-transit", "At the FC"):
         t = wb[tab]
@@ -171,7 +185,9 @@ def run(uploads: Path, out: Path) -> int:
     # the FC-review gate takes MAA4 via fc_resolutions against the REAL PDF,
     # and the 5-day sales/stock gap passes silently (< sales_recency_prompt_days).
     f3 = make_translated_workbook(uploads, out)
-    print(f"  F3 {f3.name} (Pune lead = {PUNE_LEAD_DAYS}, CONFIRM) — only fixture left")
+    print(f"  F3 {f3.name} (Pune lead = {PUNE_LEAD_DAYS}, CONFIRM)"
+          + (f" | F4 BLR4 seed {SEED_BLR4} placement={IXD_PLACEMENT}"
+             if SEED_BLR4 else " — no BLR4 seed (gate paths dormant)"))
 
     print("== ingestion ==")
     can, rep = ing.run_ingestion(
@@ -203,7 +219,8 @@ def run(uploads: Path, out: Path) -> int:
 
     print("== calculation ==")
     res = run_calculation(can, stock, DAYS_OF_COVER,
-                          asin_judgments=ASIN_JUDGMENTS or None)
+                          asin_judgments=ASIN_JUDGMENTS or None,
+                          ixd_placement=IXD_PLACEMENT)
     m = res.meta
     print(f"  plan {res.plan.shape} | planned {m['units_planned_total']}u | "
           f"resolved {m['demand_units_resolved']:.0f}u | "

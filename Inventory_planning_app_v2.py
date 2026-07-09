@@ -220,6 +220,85 @@ st.success(f"✅ Stock workbook read — anchor date "
            f"{stock.stock_as_of.date()} (all depletion math anchors here, "
            f"never on today).")
 
+# --------------------------------- gate 2b: IXD placement gate (v2.9.2 §8)
+from calculation_v2 import detect_ixd_inbound
+
+ixd_placement = "rational"          # engine default; only used if pool empty
+ixd_pool = detect_ixd_inbound(can, stock, float(days_of_cover))
+if ixd_pool:
+    total_units = int(sum(ixd_pool.values()))
+    n_skus = len(ixd_pool)
+    ex_asin = max(ixd_pool, key=ixd_pool.get)          # biggest pool = example
+    ex_qty = int(ixd_pool[ex_asin])
+    ex_skus = can.sku_master.loc[can.sku_master["asin"] == ex_asin,
+                                 "sku_u"].tolist()
+    ex_name = ex_skus[0] if ex_skus else ex_asin
+
+    st.subheader("IXD stock at BLR4 — how should this run treat it?")
+    st.write(f"**{total_units} units across {n_skus} product(s)** are sitting "
+             f"at the BLR4 cross-dock. Amazon will move them to regional "
+             f"warehouses on its own logic — sometimes sensibly spread, "
+             f"sometimes dumped wholesale into one region. **Where they land "
+             f"is not predictable**, so planning on them is a bet. Choose the "
+             f"bet for this run (the safe default is not to plan at all and "
+             f"rerun in a few days, once the movement shows up as an "
+             f"In-transit line):")
+    ixd_placement = st.selectbox(
+        "IXD placement assumption for this run",
+        options=["abort", "rational", "single", "two"],
+        format_func=lambda v: {
+            "abort": "IXD inbound — unpredictable. Abort (recommended "
+                     "default)",
+            "rational": "Assume proper allocation — spread across needy "
+                        "regions",
+            "single": "Dump each product into its single neediest region",
+            "two": "Split each product across its two neediest regions",
+        }[v], index=0, key="ixd_placement")
+    # plain-language explanation + live worked example for the SELECTED option
+    _expl = {
+        "abort": (f"**What this does:** stops the run — no plan file. Your "
+                  f"{total_units} units stay visible in stock totals but "
+                  f"nothing is planned against a guess. **Example:** the "
+                  f"{ex_qty} units of {ex_name} stay 'at BLR4' untouched; "
+                  f"when Amazon dispatches them you'll enter that shipment "
+                  f"on the In-transit tab and rerun — then they count at "
+                  f"the right place, on the right date."),
+        "rational": (f"**What this does:** assumes Amazon spreads each "
+                     f"product across the regions that are short of it, in "
+                     f"proportion to how short each is. Regions get smaller "
+                     f"shipments from you accordingly. **Example:** if "
+                     f"Bombay is short 60 and Delhi short 40 of {ex_name}, "
+                     f"its {ex_qty} hub units are credited 60:40 between "
+                     f"them — and your plan ships that much less to each. "
+                     f"Risk: if Amazon actually dumps everything in one "
+                     f"place, the other region can run out."),
+        "single": (f"**What this does:** assumes Amazon dumps each "
+                   f"product's entire hub stock into the ONE region that "
+                   f"needs it most (highest sales vs lowest stock) — even "
+                   f"past what that region needs. **Example:** all "
+                   f"{ex_qty} units of {ex_name} are credited to its "
+                   f"neediest region; your plan ships that region nothing "
+                   f"(it may even show overstock there), and every other "
+                   f"region is planned as if it gets none."),
+        "two": (f"**What this does:** assumes Amazon splits each product's "
+                f"hub stock between its TWO neediest regions, in proportion "
+                f"to how short each is — uncapped, so one can end up "
+                f"overstocked. **Example:** if Bombay is short 150 and "
+                f"Delhi short 50 of {ex_name}, its {ex_qty} units are "
+                f"credited 75%/25% to them; if only one region is short, "
+                f"everything goes there. All other regions are planned as "
+                f"if they get none."),
+    }
+    st.info(_expl[ixd_placement])
+    if ixd_placement == "abort":
+        st.error(f"**Run stopped at your request — nothing was planned.** "
+                 f"{total_units} units across {n_skus} product(s) are still "
+                 f"at BLR4 and their destination is unknown. Rerun in a few "
+                 f"days: once Amazon dispatches them, enter the shipment on "
+                 f"the workbook's In-transit tab (destination + reach date) "
+                 f"and the plan will count them properly.")
+        st.stop()
+
 # --------------------------------------- gate 3: ASIN suppression judgments
 asin_judgments = {}
 ambiguous = detect_asin_ambiguities(can, stock)
@@ -248,7 +327,8 @@ if not st.button("🧮 Calculate plan", type="primary"):
     st.stop()
 
 res = run_calculation(can, stock, float(days_of_cover),
-                      asin_judgments=asin_judgments or None)
+                      asin_judgments=asin_judgments or None,
+                      ixd_placement=ixd_placement)
 
 m = res.meta
 k1, k2, k3, k4 = st.columns(4)

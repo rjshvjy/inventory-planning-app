@@ -212,9 +212,9 @@ def assemble_supply(can: Canonical, stock: StockInputs, days_of_cover: float,
                - anchor.normalize()).days
         asin = sku_asin.get(r["sku_u"])
         if region == IXD_REGION:
-            # inbound TO the hub: joins the IXD pool on arrival; modelled by
-            # adding to ixd stock if it lands within ixd_transfer window
-            if day <= can.config["ixd_transfer_days"] + days_of_cover:
+            # inbound TO the hub: joins the IXD pool if it lands within
+            # days_of_cover of the anchor (v2.9.2 — no transfer-days constant)
+            if day <= days_of_cover:
                 ixd_stock[asin] = ixd_stock.get(asin, 0) + float(r["qty"])
             continue
         if day <= horizon:
@@ -260,24 +260,110 @@ def assemble_supply(can: Canonical, stock: StockInputs, days_of_cover: float,
 
 
 # ------------------------------------------------------------ step 5: IXD (§8)
+# v2.9.2: runtime placement gate. Placement is a per-run USER bet, chosen in
+# the app: "rational" | "single" | "two". "abort" never reaches this module
+# (the app stops the run). Credited units count at day 0 in the stockout sim;
+# the REAL movement re-enters as a normal In-transit row next run.
 
-def apply_ixd(demand: pd.DataFrame, ixd_stock: dict, cfg: dict
-              ) -> pd.DataFrame:
-    """Proportional-to-daily-sales split of each ASIN's IXD stock across its
-    demand regions, scaled by ixd_confidence. Returns asin x region
-    ixd_offset. Arrival day for the sim = ixd_transfer_days."""
-    rows = []
-    conf = float(cfg["ixd_confidence"])
-    for asin, qty in ixd_stock.items():
-        if qty <= 0 or conf <= 0 or asin is None:
+IXD_PLACEMENTS = ("abort", "rational", "single", "two")
+
+
+def detect_ixd_inbound(can: Canonical, stock: StockInputs,
+                       days_of_cover: float) -> dict:
+    """Pre-flight for the app's IXD gate: {asin: hub_qty} for every ASIN with
+    stock at the hub (current at BLR4 + in-transit landing within
+    days_of_cover + at-FC pending at BLR4). Empty dict = gate never fires.
+    Mirrors assemble_supply's pooling WITHOUT judgments (gate runs first)."""
+    anchor = stock.stock_as_of
+    sku_asin = dict(zip(can.sku_master["sku_u"], can.sku_master["asin"]))
+    pool: dict = {}
+    cur = stock.current
+    for _, r in cur[cur["region"] == IXD_REGION].iterrows():
+        if float(r["qty"]) > 0:
+            a = sku_asin.get(r["sku_u"])
+            pool[a] = pool.get(a, 0.0) + float(r["qty"])
+    it = stock.in_transit if stock.in_transit is not None else pd.DataFrame()
+    for _, r in it.iterrows():
+        if r["region"] != IXD_REGION:
             continue
-        d = demand[demand["asin"] == asin]
-        tot = d["daily"].sum()
-        if tot <= 0:
-            continue                       # no demand anywhere: keep at hub
-        for _, r in d.iterrows():
-            rows.append({"asin": asin, "region": r["region"],
-                         "ixd_offset": qty * conf * r["daily"] / tot})
+        day = (pd.Timestamp(r["reach_date"]).normalize()
+               - anchor.normalize()).days
+        if day <= days_of_cover and float(r["qty"]) > 0:
+            a = sku_asin.get(r["sku_u"])
+            pool[a] = pool.get(a, 0.0) + float(r["qty"])
+    af = stock.at_fc if stock.at_fc is not None else pd.DataFrame()
+    for _, r in af.iterrows():
+        pend = float(r.get("pending") or 0)
+        if r["region"] == IXD_REGION and pend > 0:
+            a = sku_asin.get(r["sku_u"])
+            pool[a] = pool.get(a, 0.0) + pend
+    return {a: q for a, q in pool.items() if a is not None and q > 0}
+
+
+def apply_ixd(demand: pd.DataFrame, supply: pd.DataFrame, ixd_stock: dict,
+              lead_days: dict, days_of_cover: float, placement: str,
+              warnings: list) -> pd.DataFrame:
+    """Shortfall-based placement of each ASIN's hub stock (v2.9.2 §8).
+
+    shortfall = daily x (lead + cover) − (current + in-transit + at-FC),
+    SIGNED (negative = surplus). Per placement:
+      rational : credit needy regions in proportion to POSITIVE shortfall
+                 share; nothing credited if no region is short (noted).
+      single   : 100% to the largest-shortfall region (signed ranking, so
+                 with all regions in surplus it goes to the LEAST overstocked).
+      two      : split across the top-two shortfall regions in proportion to
+                 their positive shortfalls; if only one is short, all to it
+                 (collapses to 'single'). NO CAPS anywhere — a region can be
+                 pushed into modelled overstock; that mimics real IXD dumps.
+    Returns asin x region ixd_offset."""
+    if placement not in ("rational", "single", "two"):
+        raise ValueError(f"ixd_placement {placement!r} invalid here — "
+                         f"'abort' must be handled by the app, not the engine")
+    base = demand.merge(supply, on=["asin", "region"], how="outer")
+    for c in ("daily", "current", "in_transit_counted", "at_fc_pending"):
+        if c not in base:
+            base[c] = 0.0
+        base[c] = base[c].fillna(0.0)
+    base["lead"] = base["region"].map(lead_days)
+    base = base[base["lead"].notna()]          # plannable regions only
+    base["shortfall"] = (base["daily"] * (base["lead"] + days_of_cover)
+                         - (base["current"] + base["in_transit_counted"]
+                            + base["at_fc_pending"]))
+    rows = []
+    for asin, qty in ixd_stock.items():
+        if asin is None or qty <= 0:
+            continue
+        d = base[base["asin"] == asin].sort_values("shortfall",
+                                                   ascending=False)
+        if d.empty:
+            warnings.append(f"IXD: {qty:.0f} units of ASIN {asin} at the hub "
+                            f"have no plannable region — left uncredited.")
+            continue
+        if placement == "rational":
+            needy = d[d["shortfall"] > 0]
+            tot = needy["shortfall"].sum()
+            if tot <= 0:
+                warnings.append(
+                    f"IXD (rational): every region already covers ASIN "
+                    f"{asin} — its {qty:.0f} hub units left uncredited.")
+                continue
+            for _, r in needy.iterrows():
+                rows.append({"asin": asin, "region": r["region"],
+                             "ixd_offset": qty * r["shortfall"] / tot})
+        elif placement == "single":
+            rows.append({"asin": asin, "region": d.iloc[0]["region"],
+                         "ixd_offset": float(qty)})
+        else:                                   # "two"
+            top = d.head(2)
+            pos = top[top["shortfall"] > 0]
+            if len(pos) <= 1:                   # 0 or 1 short -> all to #1
+                rows.append({"asin": asin, "region": d.iloc[0]["region"],
+                             "ixd_offset": float(qty)})
+            else:
+                tot = pos["shortfall"].sum()
+                for _, r in pos.iterrows():
+                    rows.append({"asin": asin, "region": r["region"],
+                                 "ixd_offset": qty * r["shortfall"] / tot})
     return (pd.DataFrame(rows) if rows else
             pd.DataFrame(columns=["asin", "region", "ixd_offset"]))
 
@@ -304,7 +390,8 @@ def raw_requirements(demand: pd.DataFrame, supply: pd.DataFrame,
 
 
 def round_boxes(df: pd.DataFrame, master: pd.DataFrame, cfg: dict,
-                days_of_cover: float) -> pd.DataFrame:
+                days_of_cover: float,
+                ixd_placement: str = "rational") -> pd.DataFrame:
     """Two-tier rounding (§9). Flags: FULL_CARTON / PARTIAL_BOX (Tier-2,
     assumption A1) / ROUNDED_DOWN (near-empty, A2) / AT_FC_PENDING /
     IXD_OFFSET annotations added here so every adjustment is visible."""
@@ -319,7 +406,8 @@ def round_boxes(df: pd.DataFrame, master: pd.DataFrame, cfg: dict,
         if r["at_fc_pending"] > 0:
             f.append(f"AT_FC_PENDING(+{r['at_fc_pending']:.0f})")
         if r["ixd_offset"] > 0:
-            f.append(f"IXD_OFFSET(-{r['ixd_offset']:.1f})")
+            f.append(f"IXD_ASSUMED({r['ixd_offset']:.1f} under "
+                     f"'{ixd_placement}')")
         if req <= 0:
             rounded.append(0); boxes.append(0.0); flags.append(";".join(f))
             continue
@@ -355,11 +443,11 @@ def round_boxes(df: pd.DataFrame, master: pd.DataFrame, cfg: dict,
 def simulate_stockouts(plan: pd.DataFrame, schedule: pd.DataFrame,
                        cfg: dict, days_of_cover: float) -> pd.DataFrame:
     """Day-walk on ROUNDED quantities. Arrivals: in-transit on its committed
-    day, at-FC pending on day 0, IXD offset on ixd_transfer_days, the planned
-    shipment on the region's lead day. Deficits below
+    day, at-FC pending AND credited IXD offset on day 0 (v2.9.2: the credit
+    is a bet that the stock is effectively placed this run — no arrival
+    model), the planned shipment on the region's lead day. Deficits below
     min_stockout_deficit_units are suppressed."""
     thresh = float(cfg["min_stockout_deficit_units"])
-    ixd_day = int(cfg["ixd_transfer_days"])
     hits = []
     sched = {(r["asin"], r["region"]): [] for _, r in schedule.iterrows()}
     for _, r in schedule.iterrows():
@@ -370,13 +458,12 @@ def simulate_stockouts(plan: pd.DataFrame, schedule: pd.DataFrame,
             continue
         lead = int(r["lead"])
         horizon = int(math.ceil(lead + days_of_cover))
-        stock = r["current"] + r["at_fc_pending"]        # day-0 components
+        stock = (r["current"] + r["at_fc_pending"]
+                 + r["ixd_offset"])                      # day-0 components
         arrivals = dict(sched.get((r["asin"], r["region"]), []))
         for day in range(horizon + 1):
             if day in arrivals:
                 stock += arrivals[day]
-            if day == ixd_day and r["ixd_offset"] > 0:
-                stock += r["ixd_offset"]
             if day == lead and r["rounded_qty"] > 0:
                 stock += r["rounded_qty"]
             stock -= daily
@@ -423,11 +510,20 @@ def compute_priorities(plan: pd.DataFrame) -> tuple[pd.Series, dict]:
 
 def run_calculation(can: Canonical, stock: StockInputs, days_of_cover: float,
                     asin_judgments: dict | None = None,
-                    today: pd.Timestamp | None = None) -> PlanResult:
-    """Top-level entry (contract per handover §9 / spec v2.8). The app must
-    only call this after ingestion AND workbook-read both pass (rep.ok)."""
+                    today: pd.Timestamp | None = None,
+                    ixd_placement: str = "rational") -> PlanResult:
+    """Top-level entry (contract per handover §9 / spec v2.9.2). The app must
+    only call this after ingestion AND workbook-read both pass (rep.ok) AND
+    the IXD gate is resolved — 'abort' is handled by the app and must never
+    reach here. ixd_placement: 'rational' | 'single' | 'two' (§8)."""
     result = PlanResult()
     asin_judgments = asin_judgments or {}
+    if ixd_placement == "abort":
+        raise ValueError("ixd_placement='abort' — the app must stop the run "
+                         "at the IXD gate, not call the engine (spec §8).")
+    if ixd_placement not in ("rational", "single", "two"):
+        raise ValueError(f"unknown ixd_placement {ixd_placement!r} "
+                         f"(expected rational | single | two)")
 
     # unresolved ASIN ambiguities are loud, defaulted to combine, and flagged
     for asin in detect_asin_ambiguities(can, stock):
@@ -447,8 +543,16 @@ def run_calculation(can: Canonical, stock: StockInputs, days_of_cover: float,
     supply, schedule, ixd_stock = assemble_supply(
         can, stock, days_of_cover, asin_judgments, result)
 
-    # 5: IXD
-    ixd = apply_ixd(demand, ixd_stock, can.config)
+    # 5: IXD (v2.9.2 — shortfall-based placement per the user's gate choice)
+    ixd = apply_ixd(demand, supply, ixd_stock, stock.lead_days,
+                    days_of_cover, ixd_placement, result.warnings)
+    if len(ixd) and ixd["ixd_offset"].sum() > 0:
+        result.warnings.append(
+            f"IXD placement bet this run: '{ixd_placement}' — "
+            f"{ixd['ixd_offset'].sum():.0f} hub units credited to "
+            f"{ixd['region'].nunique()} region(s); affected lines are "
+            f"flagged IXD_ASSUMED. The real dispatch enters as an "
+            f"In-transit row next run.")
 
     # 6: raw requirements
     df = raw_requirements(demand, supply, ixd, stock.lead_days, days_of_cover)
@@ -457,7 +561,8 @@ def run_calculation(can: Canonical, stock: StockInputs, days_of_cover: float,
     df["priority_pre"], _ = compute_priorities(df)
 
     # 7: rounding
-    df = round_boxes(df, can.sku_master, can.config, days_of_cover)
+    df = round_boxes(df, can.sku_master, can.config, days_of_cover,
+                     ixd_placement)
 
     # 8: stockout sim on rounded quantities
     result.stockouts = simulate_stockouts(df, schedule, can.config,
@@ -535,6 +640,9 @@ def run_calculation(can: Canonical, stock: StockInputs, days_of_cover: float,
         "config": dict(can.config),
         "lead_days": dict(stock.lead_days),
         "asin_judgments": dict(asin_judgments),
+        "ixd_placement": ixd_placement,
+        "ixd_units_credited": float(ixd["ixd_offset"].sum()) if len(ixd)
+                              else 0.0,
         "manual_split_regions": manual_regions,   # start empty in the output
         "region_order": ordered,
         "units_planned_total": int(result.plan["rounded_qty"].sum()),

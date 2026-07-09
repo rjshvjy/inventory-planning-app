@@ -89,8 +89,6 @@ CONFIG_KEYS = {  # Config tab: required parameter -> (type, sane-range check)
     "days_cover_ceiling": (float, lambda v: 1 <= v <= 365),
     "min_sales_window_days": (float, lambda v: 1 <= v <= 180),
     "freshness_tolerance_days": (float, lambda v: 0 <= v <= 30),
-    "ixd_transfer_days": (float, lambda v: 0 <= v <= 60),
-    "ixd_confidence": (float, lambda v: 0 <= v <= 1),
     "min_stockout_deficit_units": (float, lambda v: 0 <= v <= 1000),
     "sales_recency_prompt_days": (float, lambda v: 0 < v <= 365),  # v2.9 §6a
 }
