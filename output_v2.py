@@ -45,9 +45,18 @@ def _header_map(ws) -> dict:
 
 
 def build_plan_workbook(res: PlanResult, can: Canonical,
-                        template_path, out_path, stock=None) -> list[str]:
+                        template_path, out_path, stock=None,
+                        daily_workbook_src=None) -> list[str]:
     """Clone the master template and fill the plan. Returns warnings raised
-    during writing (missing columns, unplaceable rows) — caller shows them."""
+    during writing (missing columns, unplaceable rows) — caller shows them.
+
+    v2.9.2 combined output: when daily_workbook_src (path or file-like of the
+    user's FILLED daily stock workbook) is given, its working tabs are copied
+    into the output — one file doubles as inventory plan AND daily stock
+    report. Copied tabs keep live formulas; named ranges (LEADTBL/SKUTBL)
+    travel too, or the Overall-stock formulas would break. Stock snapshot is
+    KEPT (values-only = renders in mobile/email preview, where formula tabs
+    show blank until a real spreadsheet app recalculates)."""
     warns: list[str] = []
     wb = load_workbook(template_path)
     # v2.9.1: house style harvested from the template's own Stock snapshot
@@ -74,7 +83,7 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     region_col = {r: hdr[r] for r in res.meta.get("region_order", [])
                   if r in hdr}
     for r in res.meta.get("region_order", []):
-        if r not in hdr and r not in ("BLR4 IXD", "YSXA"):
+        if r not in hdr and r not in (can.ixd_region, can.ignore_region):
             warns.append(f"Template has no column for region '{r}' — its "
                          f"quantities were NOT written. Add the column to "
                          f"the master (header row {HEADER_ROW}).")
@@ -145,7 +154,7 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
         use = cols or list(df.columns)
         for j, cname in enumerate(use, 1):
             _style_hdr(det.cell(row, j, cname))
-        det.row_dimensions[row].height = 30
+        det.row_dimensions[row].height = 44   # wrapped headers
         row += 1
         band_on, prev_key = False, object()
         BAND = PatternFill("solid", fgColor="F2F2F2")
@@ -359,9 +368,118 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
             ss.cell(1, ss.max_column,
                     "As of " + stock.stock_as_of.strftime("%d-%b-%Y"))
 
-    # README first (v2.9.1)
-    if "README" in wb.sheetnames:
-        wb.move_sheet("README", offset=-wb.sheetnames.index("README"))
+    # ---- v2.9.2: combined file — graft the daily workbook's tabs in
+    if daily_workbook_src is not None:
+        try:
+            _merge_daily_tabs(wb, daily_workbook_src)
+            _write_combined_readme(wb)
+        except Exception as e:                       # never sink the plan
+            warns.append(f"Combined output: daily tabs could not be copied "
+                         f"({e}) — plan tabs are complete; the daily "
+                         f"workbook remains your separate file this run.")
+
+    # ---- v2.9.2: tab colours + reading order (names unchanged — formulas
+    #      and the reader reference tabs by name, so we NEVER rename)
+    AMBER, TEAL, GREY = "FFC000", "1F4E5F", "BFBFBF"   # amber = act on
+    colour = {"README": GREY,
+              "Appointment plan": AMBER, DETAILS_SHEET: AMBER,
+              "Sales velocity": AMBER,
+              "Stock snapshot": TEAL, "Reference": TEAL,
+              "Current stock": TEAL, "In-transit": TEAL,
+              "At the FC": TEAL, "Overall stock": TEAL,
+              "EDD & Expiry": TEAL}
+    for name, col in colour.items():
+        if name in wb.sheetnames:
+            wb[name].sheet_properties.tabColor = col
+    ORDER = ["README", "Appointment plan", DETAILS_SHEET, "Sales velocity",
+             "Stock snapshot", "Reference", "Current stock", "In-transit",
+             "At the FC", "Overall stock", "EDD & Expiry"]
+    rank = {t: i for i, t in enumerate(ORDER)}
+    wb._sheets.sort(key=lambda ws_: rank.get(ws_.title, len(ORDER)))
+    wb.active = 0
 
     wb.save(out_path)
     return warns
+
+
+DAILY_TABS = ["Reference", "Current stock", "In-transit", "At the FC",
+              "Overall stock", "EDD & Expiry"]      # all-or-nothing family
+
+
+def _merge_daily_tabs(wb, src):
+    """Copy the daily workbook's working tabs (values, formulas, styles,
+    widths, merges) plus the named ranges their formulas need."""
+    from copy import copy as _c
+    daily = load_workbook(src)
+    for t in DAILY_TABS:
+        if t not in daily.sheetnames:
+            continue
+        if t in wb.sheetnames:                       # avoid collision
+            del wb[t]
+        src_ws, ns = daily[t], wb.create_sheet(t)
+        for row_ in src_ws.iter_rows():
+            for cell in row_:
+                nc = ns.cell(cell.row, cell.column, cell.value)
+                if cell.has_style:
+                    nc.font, nc.fill = _c(cell.font), _c(cell.fill)
+                    nc.border = _c(cell.border)
+                    nc.alignment = _c(cell.alignment)
+                    nc.number_format = cell.number_format
+        for col_, dim in src_ws.column_dimensions.items():
+            ns.column_dimensions[col_].width = dim.width
+        for r_, dim in src_ws.row_dimensions.items():
+            ns.row_dimensions[r_].height = dim.height
+        for mc in src_ws.merged_cells.ranges:
+            ns.merge_cells(str(mc))
+        ns.freeze_panes = src_ws.freeze_panes
+    for name, defn in daily.defined_names.items():   # LEADTBL / SKUTBL
+        if name not in wb.defined_names:
+            wb.defined_names[name] = defn
+
+
+def _write_combined_readme(wb):
+    """Overwrite the README with the dual-purpose orientation."""
+    from openpyxl.styles import Font as _F
+    if "README" not in wb.sheetnames:
+        return
+    rd = wb["README"]
+    for r_ in range(1, 45):
+        for c_ in range(1, 8):
+            rd.cell(r_, c_).value = None
+    lines = [
+        ("COMBINED INVENTORY FILE — plan + daily stock report in one "
+         "workbook", 1),
+        ("", 0),
+        ("AMBER tabs = THE PLAN (act on these):", 1),
+        ("  Appointment plan — units to ship per product per region, with "
+         "priorities. THE deliverable.", 0),
+        ("  Calculation_Details — every number, flag (incl. IXD_ASSUMED) "
+         "and warning behind the plan.", 0),
+        ("  Sales velocity — plan vs daily sales vs days-cover; amber "
+         "cells = possible overstock.", 0),
+        ("", 0),
+        ("TEAL tabs = DAILY STOCK REPORT (keep these current):", 1),
+        ("  Stock snapshot — read-only stock values (this one shows in "
+         "phone/email previews).", 0),
+        ("  Reference — lead times + SKU list; correct lead times when "
+         "they change.", 0),
+        ("  Current stock — on-hand per region (green = prefilled from "
+         "the ledger).", 0),
+        ("  In-transit — shipments on the way; use the dropdowns.", 0),
+        ("  At the FC — arrivals being received; enter Shipped & "
+         "Received.", 0),
+        ("  Overall stock — auto-built summary. FORMULAS — do not type "
+         "over; may show blank in phone previews until opened in Excel.",
+         0),
+        ("  EDD & Expiry — your delivery/expiry scratch tab.", 0),
+        ("", 0),
+        ("The daily tabs are a SNAPSHOT from when this file was "
+         "generated — regenerate for fresh data.", 0),
+        ("Dates display Indian-style (07-Jul-2026).", 0),
+    ]
+    for i, (txt, bold) in enumerate(lines, start=1):
+        cell = rd.cell(i, 1, txt)
+        cell.font = _F(bold=bool(bold),
+                       size=13 if i == 1 else 11,
+                       color="1F4E5F" if bold else "1A2226")
+    rd.column_dimensions["A"].width = 100

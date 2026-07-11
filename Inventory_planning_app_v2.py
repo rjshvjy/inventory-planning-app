@@ -234,9 +234,10 @@ if ixd_pool:
                                  "sku_u"].tolist()
     ex_name = ex_skus[0] if ex_skus else ex_asin
 
-    st.subheader("IXD stock at BLR4 — how should this run treat it?")
+    hub = can.ixd_region
+    st.subheader(f"IXD stock at {hub} — how should this run treat it?")
     st.write(f"**{total_units} units across {n_skus} product(s)** are sitting "
-             f"at the BLR4 cross-dock. Amazon will move them to regional "
+             f"at the {hub} cross-dock. Amazon will move them to regional "
              f"warehouses on its own logic — sometimes sensibly spread, "
              f"sometimes dumped wholesale into one region. **Where they land "
              f"is not predictable**, so planning on them is a bet. Choose the "
@@ -259,7 +260,7 @@ if ixd_pool:
         "abort": (f"**What this does:** stops the run — no plan file. Your "
                   f"{total_units} units stay visible in stock totals but "
                   f"nothing is planned against a guess. **Example:** the "
-                  f"{ex_qty} units of {ex_name} stay 'at BLR4' untouched; "
+                  f"{ex_qty} units of {ex_name} stay 'at {hub}' untouched; "
                   f"when Amazon dispatches them you'll enter that shipment "
                   f"on the In-transit tab and rerun — then they count at "
                   f"the right place, on the right date."),
@@ -293,7 +294,7 @@ if ixd_pool:
     if ixd_placement == "abort":
         st.error(f"**Run stopped at your request — nothing was planned.** "
                  f"{total_units} units across {n_skus} product(s) are still "
-                 f"at BLR4 and their destination is unknown. Rerun in a few "
+                 f"at {hub} and their destination is unknown. Rerun in a few "
                  f"days: once Amazon dispatches them, enter the shipment on "
                  f"the workbook's In-transit tab (destination + reach date) "
                  f"and the plan will count them properly.")
@@ -375,7 +376,8 @@ with st.expander("Run meta & flagged assumptions"):
 # ------------------------------------------------------- output workbook
 out = io.BytesIO()
 master_src = _buf(o_master) or "reference/inventory_plan_template.xlsx"
-writer_warns = build_plan_workbook(res, can, master_src, out, stock=stock)
+writer_warns = build_plan_workbook(res, can, master_src, out, stock=stock,
+                                   daily_workbook_src=_buf(f_workbook))
 for w in writer_warns:
     st.warning(w)
 st.download_button(

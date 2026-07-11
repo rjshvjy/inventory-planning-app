@@ -48,8 +48,8 @@ TAB_ATFC = "At the FC"
 TAB_OVERALL = "Overall stock"
 TAB_EDD = "EDD & Expiry"
 
-COL_IXD = "BLR4 IXD"           # grand-total on-hand, valid destination
-COL_YSXA = "YSXA"              # visible on stock tabs, never a destination
+COL_IXD = "BLR4 IXD"           # DEFAULT hub label; live value = can.ixd_region
+COL_YSXA = "YSXA"              # DEFAULT ignore label; live value = can.ignore_region
 
 INTRANSIT_ROWS = 60            # blank input rows provided (3..62)
 ATFC_ROWS = 40                 # blank input rows provided (3..42)
@@ -61,8 +61,8 @@ MODES = ("ATS", "Self")
 DEFAULT_LEAD_DAYS = {
     "Delhi (DL)": 13, "Haryana (HR)": 13, "Bombay (MH)": 10, "Pune (MH)": 10,
     "Bangalore (KA)": 3, "Hyderabad (TG)": 3, "Chennai (TN)": 2,
-    "Calcutta (WB)": 14, "Lucknow (UP)": 12, COL_IXD: 3,
-}
+    "Calcutta (WB)": 14, "Lucknow (UP)": 12, COL_IXD: 3,   # hub keyed by
+}                       # DEFAULT label; build aliases the live label to it
 FALLBACK_LEAD_DAYS = 7         # seed for a region with no known default
 
 # ------------------------------------------------------------------ styles
@@ -166,7 +166,9 @@ def ordered_regions(can: Canonical) -> list[str]:
     return regions
 
 
-def _lead_seed(region: str) -> int:
+def _lead_seed(region: str, ixd_col: str = COL_IXD) -> int:
+    if region == ixd_col:                        # v2.9.2: live hub label
+        region = COL_IXD                         # aliases to the default key
     return DEFAULT_LEAD_DAYS.get(region, FALLBACK_LEAD_DAYS)
 
 
@@ -212,8 +214,10 @@ def build_stock_workbook(can: Canonical, prefill: bool = True,
     blank downloadable template. Returns xlsx bytes."""
     today = today or pd.Timestamp.now().normalize()
     regions = ordered_regions(can)
-    stock_cols = regions + [COL_IXD, COL_YSXA]      # Current / Overall tabs
-    dest_list = regions + [COL_IXD]                  # dropdowns + lead table
+    ixd_col = can.ixd_region if can is not None else COL_IXD     # v2.9.2
+    ysxa_col = can.ignore_region if can is not None else COL_YSXA
+    stock_cols = regions + [ixd_col, ysxa_col]       # Current / Overall tabs
+    dest_list = regions + [ixd_col]                  # dropdowns + lead table
     master = can.sku_master
     skus = list(master["sku"])
     products = list(master["item"]) if "item" in master else [""] * len(skus)
@@ -241,7 +245,7 @@ def build_stock_workbook(can: Canonical, prefill: bool = True,
         _set(ws, 2, c, t, font=HDR_FONT, fill=HDR_FILL)
     for i, rg in enumerate(dest_list, 3):
         _set(ws, i, 1, rg)
-        _set(ws, i, 2, _lead_seed(rg), font=INPUT_FONT)
+        _set(ws, i, 2, _lead_seed(rg, ixd_col), font=INPUT_FONT)
     for i, (sku, prod) in enumerate(zip(skus, products), 3):
         _set(ws, i, 4, sku)
         _set(ws, i, 5, prod)
@@ -363,7 +367,7 @@ def build_stock_workbook(can: Canonical, prefill: bool = True,
     ws = wb.create_sheet(TAB_ATFC)
     ws.freeze_panes = "A3"
     for col, w in (("A", 16), ("B", 17), ("C", 20), ("D", 32), ("E", 11),
-                   ("F", 11), ("G", 14)):
+                   ("F", 11), ("G", 14), ("H", 14), ("I", 14)):
         ws.column_dimensions[col].width = w
     ws.cell(1, 1, "Shipments that have reached the FC and are being received."
                   " App pre-fills from Amazon where possible.").font = \
@@ -448,7 +452,7 @@ def build_stock_workbook(can: Canonical, prefill: bool = True,
                 if typ == "Available":
                     f = (f"=SUMIF('{TAB_CURRENT}'!$A:$A,$A{r},"
                          f"'{TAB_CURRENT}'!{L}:{L})")
-                elif rg == COL_YSXA:
+                elif rg == ysxa_col:
                     f = "=0"
                 elif typ == "In transit":
                     f = (f"=SUMIFS('{TAB_INTRANSIT}'!$F:$F,"
@@ -608,7 +612,9 @@ def read_stock_workbook(path_or_file, can: Canonical | None = None
 
     known_skus = (set(can.sku_master["sku_u"]) if can is not None and
                   can.sku_master is not None else None)
-    known_dests = (set(ordered_regions(can)) | {COL_IXD}
+    ixd_col = can.ixd_region if can is not None else COL_IXD     # v2.9.2
+    ysxa_col = (can.ignore_region if can is not None else COL_YSXA).upper()
+    known_dests = (set(ordered_regions(can)) | {ixd_col}
                    if can is not None else None)
 
     # ---- Reference: lead-days table (runtime home of lead times, §7a)
@@ -652,7 +658,8 @@ def read_stock_workbook(path_or_file, can: Canonical | None = None
     skip = {"SKU", "Product", "Total", "Current stock (as-on-date)"}
     region_cols = {h: c for h, c in hdr.items() if h not in skip}
     if known_dests:
-        unexpected = sorted(set(region_cols) - known_dests - {COL_YSXA})
+        unexpected = sorted(set(region_cols) - known_dests
+                            - {ysxa_col, COL_YSXA})
         if unexpected:
             rep.warn(f"'{TAB_CURRENT}': unrecognized location column(s) "
                      f"{unexpected} — read as-is; check for renamed headers.")
@@ -736,8 +743,8 @@ def read_stock_workbook(path_or_file, can: Canonical | None = None
                     f"(STRICT SKU GATE).")
             continue
         dest = str(dest).strip()
-        if dest.upper() == COL_YSXA:
-            rep.err(f"'{TAB_INTRANSIT}' row {r}: YSXA is never a "
+        if dest.upper() == ysxa_col:
+            rep.err(f"'{TAB_INTRANSIT}' row {r}: {ysxa_col} is never a "
                     f"destination.")
             continue
         if known_dests is not None:
@@ -797,8 +804,9 @@ def read_stock_workbook(path_or_file, can: Canonical | None = None
                     f"(STRICT SKU GATE).")
             continue
         dest = str(dest).strip()
-        if dest.upper() == COL_YSXA:
-            rep.err(f"'{TAB_ATFC}' row {r}: YSXA is never a destination.")
+        if dest.upper() == ysxa_col:
+            rep.err(f"'{TAB_ATFC}' row {r}: {ysxa_col} is never a "
+                    f"destination.")
             continue
         if known_dests is not None:
             norm = _dest_normalizer(known_dests)(dest)
