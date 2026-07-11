@@ -346,14 +346,14 @@ if m["demand_units_excluded"] > 0:
 
 st.subheader("Region priorities")
 st.dataframe(pd.DataFrame([res.region_priorities]).T
-             .rename(columns={0: "Priority"}), use_container_width=True)
+             .rename(columns={0: "Priority"}), width="stretch")
 
 st.subheader("Sales velocity vs plan (eyes-open view)")
 st.dataframe(pd.DataFrame(m["velocity_summary"]).rename(columns={
     "region": "Region", "daily_velocity": "Daily velocity (u/day)",
     "planned_units": "Planned units",
     "days_cover_achieved": "Days cover achieved"}),
-    use_container_width=True, hide_index=True)
+    width="stretch", hide_index=True)
 
 st.subheader("Plan (rounded quantities)")
 piv = (res.plan.pivot_table(index="sku_u", columns="region",
@@ -361,14 +361,14 @@ piv = (res.plan.pivot_table(index="sku_u", columns="region",
                             fill_value=0))
 order = [r for r in m["region_order"] if r in piv.columns]
 st.dataframe(piv[order + [c for c in piv.columns if c not in order]],
-             use_container_width=True, height=460)
+             width="stretch", height=460)
 
 with st.expander("Every line, every flag (Calculation details)"):
-    st.dataframe(res.plan, use_container_width=True, height=420)
+    st.dataframe(res.plan, width="stretch", height=420)
 if len(res.stockouts):
     with st.expander(f"Stockout warnings on the rounded plan "
                      f"({len(res.stockouts)})"):
-        st.dataframe(res.stockouts, use_container_width=True)
+        st.dataframe(res.stockouts, width="stretch")
 with st.expander("Run meta & flagged assumptions"):
     for k, v in m.items():
         st.write(f"**{k}**: {v}")
