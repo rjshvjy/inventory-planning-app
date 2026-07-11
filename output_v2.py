@@ -371,7 +371,7 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     # ---- v2.9.2: combined file — graft the daily workbook's tabs in
     if daily_workbook_src is not None:
         try:
-            _merge_daily_tabs(wb, daily_workbook_src)
+            warns.extend(_merge_daily_tabs(wb, daily_workbook_src))
             _write_combined_readme(wb)
         except Exception as e:                       # never sink the plan
             warns.append(f"Combined output: daily tabs could not be copied "
@@ -406,11 +406,26 @@ DAILY_TABS = ["Reference", "Current stock", "In-transit", "At the FC",
               "Overall stock", "EDD & Expiry"]      # all-or-nothing family
 
 
+def _sanitize_formula(tab, row, col, value, notes):
+    """Known-bad formula patterns corrected at copy time (v2.9.2). Old or
+    hand-edited workbooks sometimes carry a circular Product lookup on the
+    At-the-FC tab: column D looking up $D (itself) instead of $C (the SKU) —
+    typically from pasting an In-transit row across, where $D IS the SKU.
+    Excel flags the whole output as circular. Fix the copy; tell the user."""
+    if (tab == "At the FC" and col == 4 and isinstance(value, str)
+            and f"VLOOKUP($D{row}" in value):
+        notes.append(row)
+        return value.replace(f"VLOOKUP($D{row}", f"VLOOKUP($C{row}")
+    return value
+
+
 def _merge_daily_tabs(wb, src):
     """Copy the daily workbook's working tabs (values, formulas, styles,
-    widths, merges) plus the named ranges their formulas need."""
+    widths, merges) plus the named ranges their formulas need. Returns a
+    list of human-readable notes about sanitized cells (may be empty)."""
     from copy import copy as _c
     daily = load_workbook(src)
+    fixed_rows: list = []
     for t in DAILY_TABS:
         if t not in daily.sheetnames:
             continue
@@ -419,7 +434,9 @@ def _merge_daily_tabs(wb, src):
         src_ws, ns = daily[t], wb.create_sheet(t)
         for row_ in src_ws.iter_rows():
             for cell in row_:
-                nc = ns.cell(cell.row, cell.column, cell.value)
+                val = _sanitize_formula(t, cell.row, cell.column,
+                                        cell.value, fixed_rows)
+                nc = ns.cell(cell.row, cell.column, val)
                 if cell.has_style:
                     nc.font, nc.fill = _c(cell.font), _c(cell.fill)
                     nc.border = _c(cell.border)
@@ -435,6 +452,13 @@ def _merge_daily_tabs(wb, src):
     for name, defn in daily.defined_names.items():   # LEADTBL / SKUTBL
         if name not in wb.defined_names:
             wb.defined_names[name] = defn
+    if fixed_rows:
+        return [f"Sanitized {len(fixed_rows)} circular Product formula(s) "
+                f"on 'At the FC' (rows {fixed_rows}) while copying — your "
+                f"UPLOADED workbook still contains them; regenerate a fresh "
+                f"workbook (or fix column D to look up $C) so this stops "
+                f"recurring."]
+    return []
 
 
 def _write_combined_readme(wb):
