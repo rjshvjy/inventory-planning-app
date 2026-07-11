@@ -1,5 +1,9 @@
-streamlit
-pandas
-openpyxl
-numpy
-pdfplumber
+# Pinned for Streamlit Community Cloud stability (v2.9.2).
+# Rationale: unpinned installs let the resolver pull bleeding-edge builds on
+# a rebuild (Python 3.14 + pandas 3.x + pyarrow 25 segfaulted on 2026-07-11).
+# These are known-good, widely-used versions. Pair with runtime.txt (python-3.12).
+streamlit==1.41.1
+pandas==2.2.3
+numpy==1.26.4
+openpyxl==3.1.5
+pdfplumber==0.11.4
