@@ -152,15 +152,17 @@ Glance at the <strong>Reference</strong> tab's lead-times and correct any that h
 
 <h2 id="results">7. The results screen &amp; the downloaded plan</h2>
 <p><strong>On screen</strong> after Calculate: four headline numbers (units planned, demand covered, demand excluded, stockout warnings); any yellow notices; <em>Region priorities</em> (which regions need attention first — Pri-1 = most urgent); the <em>Sales velocity vs plan</em> table; the full plan grid; and expanders for line-by-line detail, stockout warnings, and run information.</p>
-<p><strong>The downloaded Excel</strong> has five tabs:</p>
+<p><strong>The downloaded Excel is ONE combined file</strong> — the inventory plan AND your daily stock report together. Tabs are colour-coded: <strong style="color:#b07b00">AMBER = the plan (act on these)</strong>, <strong style="color:#1F4E5F">TEAL = daily stock report (keep these current)</strong>, grey = README.</p>
 <table>
 <tr><th>Tab</th><th>Use it for</th></tr>
-<tr><td><strong>README</strong></td><td>A short orientation note.</td></tr>
-<tr><td><strong>Appointment plan</strong></td><td>THE deliverable — units to ship per product per region, with priorities. Act on this.</td></tr>
-<tr><td><strong>Stock snapshot</strong></td><td>Your current / in-transit / at-FC stock copied in, so you can cross-check while you work.</td></tr>
-<tr><td><strong>Calculation_Details</strong></td><td>Every number behind every quantity — daily sales, stock parts, rounding, flags. The "why is it 32?" tab. Rows are shaded in groups per product.</td></tr>
-<tr><td><strong>Sales velocity</strong></td><td>Per product per region: <em>Plan qty | Velocity/day | Days cover</em>, side by side, region blocks separated by lines, totals at the end.</td></tr>
+<tr><td><strong>README</strong> (grey)</td><td>Which tab does what — start here.</td></tr>
+<tr><td><strong>Appointment plan</strong> (amber)</td><td>THE deliverable — units to ship per product per region, with priorities. Act on this.</td></tr>
+<tr><td><strong>Calculation_Details</strong> (amber)</td><td>Every number behind every quantity — daily sales, stock parts, rounding, flags (including any IXD_ASSUMED bets). The "why is it 32?" tab.</td></tr>
+<tr><td><strong>Sales velocity</strong> (amber)</td><td>Per product per region: <em>Plan qty | Velocity/day | Days cover</em>, region blocks separated by lines, totals at the end.</td></tr>
+<tr><td><strong>Stock snapshot</strong> (teal)</td><td>Read-only stock values. <strong>This is the tab to glance at on a phone</strong> — it shows in email/phone previews, where formula tabs can look blank until opened in Excel.</td></tr>
+<tr><td><strong>Reference, Current stock, In-transit, At the FC, Overall stock, EDD &amp; Expiry</strong> (teal)</td><td>Your daily working tabs, copied in from the workbook you uploaded — the same sheets, same formulas, so the file doubles as that day's stock report. They are a snapshot from generation time; regenerate for fresh data.</td></tr>
 </table>
+<div class="warn"><strong>Opening on a phone?</strong> Formula-driven tabs (like Overall stock) can look empty in email/phone previews — the numbers appear once the file is opened in Excel or Sheets. The <strong>Stock snapshot</strong> tab always shows values, so use it for a mobile glance.</div>
 <div class="tip"><strong>Days-cover higher than your setting is normal</strong> — full cartons buy extra days, and regions already holding stock show their true (large) coverage. <strong>But <span class="amber-chip">amber</span> cells on the Sales-velocity tab mean possible OVERSTOCK</strong> — coverage more than 1.5× your setting. That's the app pointing at stock piling up against slow sales; review before shipping more there.</div>
 
 <h2 id="errors">8. Common messages &amp; fixes</h2>
