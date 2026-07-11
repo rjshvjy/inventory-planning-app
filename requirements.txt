@@ -1,8 +1,9 @@
 # Pinned for Streamlit Community Cloud stability (v2.9.2).
-# Rationale: unpinned installs let the resolver pull bleeding-edge builds on
-# a rebuild (Python 3.14 + pandas 3.x + pyarrow 25 segfaulted on 2026-07-11).
-# These are known-good, widely-used versions. Pair with runtime.txt (python-3.12).
-streamlit==1.41.1
+# python is pinned separately via the deploy-time setting / runtime.txt (3.12).
+# History: unpinned resolver pulled Python 3.14 + pandas 3.x -> segfault (11 Jul 2026).
+# streamlit 1.41.1 + brand-new tornado broke the websocket (CONNECTING loop),
+# so streamlit is pinned to the current major version instead.
+streamlit==1.59.1
 pandas==2.2.3
 numpy==1.26.4
 openpyxl==3.1.5
