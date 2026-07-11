@@ -1,9 +1,9 @@
-# Pinned for Streamlit Community Cloud stability (v2.9.2). Python pinned to 3.12
-# at deploy time. Do NOT loosen these — history below is why each pin exists:
-#  - unpinned resolver pulled Python 3.14 + pandas 3.x  -> segfault (11 Jul 2026)
-#  - streamlit 1.41.1 + 2026 tornado                    -> websocket CONNECTING loop
-#  - pyarrow 25 (unpinned, native lib)                  -> segfault after ~minutes
-streamlit==1.44.1
+# Pinned for Streamlit Community Cloud stability (v2.9.2). Python 3.12 at deploy.
+# Empirical matrix from 11 Jul 2026 outage:
+#   streamlit 1.59.1 + pyarrow 25  -> connected fine, segfaulted after ~47 min
+#   streamlit 1.41/1.44 + tornado 6.5.7 -> websocket never connects (CONNECTING loop)
+# => current streamlit (connects on Cloud's 2026 proxy) + mature pyarrow (no segfault).
+streamlit==1.59.1
 pandas==2.2.3
 numpy==1.26.4
 pyarrow==16.1.0
