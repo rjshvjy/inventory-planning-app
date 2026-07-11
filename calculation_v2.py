@@ -44,8 +44,8 @@ from workbook_builder_v2 import StockInputs, ordered_regions
 # ---------------------------------------------------------------- constants
 
 ROUNDDOWN_FRAC = 0.30          # assumption A2 — near-empty round-down fraction
-IXD_REGION = "BLR4 IXD"
-IGNORE_REGION = "YSXA"
+# v2.9.2: hub / ignore region labels come from config via Canonical
+# (can.ixd_region / can.ignore_region) — no longer module constants.
 
 PRI_1, PRI_2, PRI_3, PRI_4 = "Pri-1", "Pri-2", "Pri-3", "Pri-4"
 
@@ -76,7 +76,7 @@ def build_code_to_region(can: Canonical) -> dict:
                      if s["default"]}
     out = {}
     for lbl in can.regions:
-        if lbl in (IXD_REGION, IGNORE_REGION):
+        if lbl in (getattr(can, "ixd_region", "BLR4 IXD"), getattr(can, "ignore_region", "YSXA")):
             continue
         if "(" not in lbl:
             continue
@@ -165,6 +165,8 @@ def assemble_supply(can: Canonical, stock: StockInputs, days_of_cover: float,
     ixd stock per ASIN)."""
     anchor = stock.stock_as_of
     sku_asin = dict(zip(can.sku_master["sku_u"], can.sku_master["asin"]))
+    IXD_REGION = getattr(can, "ixd_region", "BLR4 IXD")
+    IGNORE_REGION = getattr(can, "ignore_region", "YSXA")
 
     # ---- current stock: split planning regions / IXD / excluded-by-judgment
     cur = stock.current.copy()
@@ -276,6 +278,7 @@ def detect_ixd_inbound(can: Canonical, stock: StockInputs,
     Mirrors assemble_supply's pooling WITHOUT judgments (gate runs first)."""
     anchor = stock.stock_as_of
     sku_asin = dict(zip(can.sku_master["sku_u"], can.sku_master["asin"]))
+    IXD_REGION = getattr(can, "ixd_region", "BLR4 IXD")
     pool: dict = {}
     cur = stock.current
     for _, r in cur[cur["region"] == IXD_REGION].iterrows():

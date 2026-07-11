@@ -234,7 +234,7 @@ if ixd_pool:
                                  "sku_u"].tolist()
     ex_name = ex_skus[0] if ex_skus else ex_asin
 
-    hub = can.ixd_region
+    hub = getattr(can, "ixd_region", "BLR4 IXD")
     st.subheader(f"IXD stock at {hub} — how should this run treat it?")
     st.write(f"**{total_units} units across {n_skus} product(s)** are sitting "
              f"at the {hub} cross-dock. Amazon will move them to regional "

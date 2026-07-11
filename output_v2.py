@@ -83,7 +83,7 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     region_col = {r: hdr[r] for r in res.meta.get("region_order", [])
                   if r in hdr}
     for r in res.meta.get("region_order", []):
-        if r not in hdr and r not in (can.ixd_region, can.ignore_region):
+        if r not in hdr and r not in (getattr(can, "ixd_region", "BLR4 IXD"), getattr(can, "ignore_region", "YSXA")):
             warns.append(f"Template has no column for region '{r}' — its "
                          f"quantities were NOT written. Add the column to "
                          f"the master (header row {HEADER_ROW}).")

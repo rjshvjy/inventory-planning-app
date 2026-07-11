@@ -93,6 +93,15 @@ CONFIG_KEYS = {  # Config tab: required parameter -> (type, sane-range check)
     "sales_recency_prompt_days": (float, lambda v: 0 < v <= 365),  # v2.9 §6a
 }
 
+# String-valued, OPTIONAL keys (default applies if the row is absent) —
+# v2.9.2: the hub / ignore region labels are config, not code. If the IXD
+# moves to another FC, update FC_Types AND (optionally) this label; the
+# master template column header and the stock workbook must match it.
+STRING_CONFIG_KEYS = {
+    "ixd_region_label": "BLR4 IXD",
+    "ignore_region_label": "YSXA",
+}
+
 # ---------------------------------------------------------------- reporting
 
 
@@ -118,6 +127,14 @@ class Canonical:
     """Validated canonical data the calculation layer consumes."""
     config: dict = field(default_factory=dict)
     fc_types: dict = field(default_factory=dict)          # FC code -> IXD|IGNORE
+
+    @property
+    def ixd_region(self):                      # v2.9.2: label from config
+        return self.config.get("ixd_region_label", "BLR4 IXD")
+
+    @property
+    def ignore_region(self):
+        return self.config.get("ignore_region_label", "YSXA")
     region_splits: list = field(default_factory=list)      # rows of split table
     demand_map: dict = field(default_factory=dict)          # non-FC demand state -> serving state code (§5b)
     fc_resolutions: dict = field(default_factory=dict)      # v2.9 §5c: per-run user FC mappings as applied
@@ -209,6 +226,9 @@ def load_config(path_or_file, rep: Report) -> tuple[dict, dict, list, dict]:
         if k is None:
             continue
         cfg[str(k).strip()] = v
+    for k, dflt in STRING_CONFIG_KEYS.items():
+        cfg.setdefault(k, dflt)
+        cfg[k] = str(cfg[k]).strip() if str(cfg[k]).strip() else dflt
     for key, (typ, check) in CONFIG_KEYS.items():
         if key not in cfg or cfg[key] is None or str(cfg[key]).strip() == "":
             rep.err(f"Config tab: '{key}' is missing or blank.")
@@ -221,6 +241,8 @@ def load_config(path_or_file, rep: Report) -> tuple[dict, dict, list, dict]:
         if not check(cfg[key]):
             rep.err(f"Config tab: '{key}' = {cfg[key]} is outside its sane range.")
     for k in cfg:
+        if k in STRING_CONFIG_KEYS:
+            continue                     # v2.9.2 string keys — already set
         if k not in CONFIG_KEYS:
             rep.warn(f"Config tab: unknown parameter '{k}' (ignored).")
 
@@ -354,7 +376,8 @@ def load_master(path_or_file, rep: Report) -> pd.DataFrame | None:
 
 
 def load_fc_registration(path_or_file, fc_types: dict, splits: list,
-                         rep: Report) -> tuple[dict, list]:
+                         rep: Report, ixd_lbl: str = "BLR4 IXD",
+                         ignore_lbl: str = "YSXA") -> tuple[dict, list]:
     """FC registration (pdf or csv) -> fc_region map + ordered region labels.
     Content-based: find (2-letter state code, FC code) pairs; fail loud."""
     pairs = []
@@ -407,10 +430,10 @@ def load_fc_registration(path_or_file, fc_types: dict, splits: list,
     split_states = {s["state"] for s in splits}
     for st, fc in clean:
         if fc_types.get(fc) == "IGNORE":
-            fc_region[fc] = "YSXA"
+            fc_region[fc] = ignore_lbl
             continue
         if fc_types.get(fc) == "IXD":
-            fc_region[fc] = "BLR4 IXD"
+            fc_region[fc] = ixd_lbl
             continue
         if st in split_states:
             hit = [s for s in splits if s["state"] == st
@@ -435,12 +458,12 @@ def load_fc_registration(path_or_file, fc_types: dict, splits: list,
     # ordered region list: registration order, splits expanded, specials last
     for st, fc in clean:
         lbl = fc_region[fc]
-        if lbl not in ("YSXA", "BLR4 IXD"):
+        if lbl not in (ignore_lbl, ixd_lbl):
             add_region(lbl)
     rep.note(f"FC registration: {len(clean)} FCs across "
              f"{len(regions)} regions "
-             f"(+ IXD/{sum(1 for v in fc_region.values() if v=='BLR4 IXD')}"
-             f", ignore/{sum(1 for v in fc_region.values() if v=='YSXA')}).")
+             f"(+ IXD/{sum(1 for v in fc_region.values() if v == ixd_lbl)}"
+             f", ignore/{sum(1 for v in fc_region.values() if v == ignore_lbl)}).")
     return fc_region, regions
 
 
@@ -653,13 +676,14 @@ def run_ingestion(sales_file, general_file, ledger_file,
     if rep.errors:                       # reference layer broken: stop early
         return can, rep
     can.fc_region, can.regions = load_fc_registration(
-        fcreg_path, can.fc_types, can.region_splits, rep)
+        fcreg_path, can.fc_types, can.region_splits, rep,
+        ixd_lbl=can.ixd_region, ignore_lbl=can.ignore_region)
     if rep.errors:
         return can, rep
 
     # Demand_Map FC-dependent validation (§5b) — needs the registration
     fc_state_codes = {m.group(1) for lbl in can.fc_region.values()
-                      if lbl not in ("YSXA", "BLR4 IXD")
+                      if lbl not in (can.ignore_region, can.ixd_region)
                       and (m := re.search(r"\((\w{2})\)$", lbl))}
     code_to_name = {v: k for k, v in STATE_NAME_TO_CODE.items()}
     for state, code in list(can.demand_map.items()):
@@ -698,7 +722,7 @@ def run_ingestion(sales_file, general_file, ledger_file,
                          f"fulfillable — its stock is shown, excluded from "
                          f"planning supply this run.")
         elif act == "ixd":
-            can.fc_region[fc] = "BLR4 IXD"
+            can.fc_region[fc] = can.ixd_region
             rep.warn(f"FC-review: {fc} treated as IXD by user — its stock "
                      f"joins the cross-dock pool this run.")
         elif act == "ignore":

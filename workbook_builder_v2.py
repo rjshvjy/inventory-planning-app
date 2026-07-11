@@ -214,8 +214,10 @@ def build_stock_workbook(can: Canonical, prefill: bool = True,
     blank downloadable template. Returns xlsx bytes."""
     today = today or pd.Timestamp.now().normalize()
     regions = ordered_regions(can)
-    ixd_col = can.ixd_region if can is not None else COL_IXD     # v2.9.2
-    ysxa_col = can.ignore_region if can is not None else COL_YSXA
+    ixd_col = getattr(can, "ixd_region", COL_IXD) if can is not None \
+        else COL_IXD                                             # v2.9.2
+    ysxa_col = getattr(can, "ignore_region", COL_YSXA) if can is not None \
+        else COL_YSXA
     stock_cols = regions + [ixd_col, ysxa_col]       # Current / Overall tabs
     dest_list = regions + [ixd_col]                  # dropdowns + lead table
     master = can.sku_master
@@ -612,8 +614,10 @@ def read_stock_workbook(path_or_file, can: Canonical | None = None
 
     known_skus = (set(can.sku_master["sku_u"]) if can is not None and
                   can.sku_master is not None else None)
-    ixd_col = can.ixd_region if can is not None else COL_IXD     # v2.9.2
-    ysxa_col = (can.ignore_region if can is not None else COL_YSXA).upper()
+    ixd_col = getattr(can, "ixd_region", COL_IXD) if can is not None \
+        else COL_IXD                                             # v2.9.2
+    ysxa_col = (getattr(can, "ignore_region", COL_YSXA)
+                if can is not None else COL_YSXA).upper()
     known_dests = (set(ordered_regions(can)) | {ixd_col}
                    if can is not None else None)
 
