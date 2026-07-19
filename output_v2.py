@@ -137,8 +137,8 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     det.cell(1, 1).font = Font(bold=True)
     for col_, w_ in (("A", 14), ("B", 18), ("C", 30), ("D", 15), ("E", 12),
                      ("F", 11), ("G", 12), ("H", 12), ("I", 10), ("J", 12),
-                     ("K", 12), ("L", 8), ("M", 11), ("N", 13), ("O", 9),
-                     ("P", 46)):
+                     ("K", 12), ("L", 8), ("M", 12), ("N", 14), ("O", 14),
+                     ("P", 10), ("Q", 54)):   # Q=Flags: last col, overflows
         det.column_dimensions[col_].width = w_
     det.freeze_panes = "D5"
     row = 3
@@ -154,7 +154,7 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
         use = cols or list(df.columns)
         for j, cname in enumerate(use, 1):
             _style_hdr(det.cell(row, j, cname))
-        det.row_dimensions[row].height = 44   # wrapped headers
+        _fit_rows(det, [row])                 # v2.9.2: size to actual text
         row += 1
         band_on, prev_key = False, object()
         BAND = PatternFill("solid", fgColor="F2F2F2")
@@ -171,8 +171,9 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
                     c_.number_format = "0.00"
                 if band_on:
                     c_.fill = PatternFill("solid", fgColor="F2F2F2")
-                if cname == "Flags":
-                    c_.alignment = Alignment(wrap_text=True, vertical="top")
+                if cname == "Flags":         # v2.9.2: no wrap — last column,
+                    c_.alignment = Alignment(  # so long flags overflow legibly
+                        wrap_text=False, vertical="center")
             row += 1
         row += 1
 
@@ -193,6 +194,8 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
         "At-FC pending (counted)", "ixd_offset": "IXD offset",
         "raw_requirement": "Raw requirement",
         "rounded_qty": "Planned qty (rounded)", "boxes": "Boxes",
+        "days_cover_before":
+        "Days cover BEFORE plan (existing+incoming only)",
         "days_cover_achieved":
         "Days cover AFTER plan (existing+incoming+planned)",
         "target_days": "Target days (lead + cover setting)",
@@ -202,6 +205,7 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
              "At-FC pending (counted)", "IXD offset", "Raw requirement",
              "Planned qty (rounded)", "Boxes",
              "Target days (lead + cover setting)",
+             "Days cover BEFORE plan (existing+incoming only)",
              "Days cover AFTER plan (existing+incoming+planned)",
              "Priority", "Flags"]]
     block("PLAN LINES (days-cover exceeds target when carton rounding "
@@ -234,63 +238,78 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     _dcsrc = res.plan.replace([_np.inf, -_np.inf], _np.nan)
     dc_ = _dcsrc.pivot_table(index="sku_u", columns="region",
                              values="days_cover_achieved", aggfunc="mean")
+    db_ = _dcsrc.pivot_table(index="sku_u", columns="region",
+                             values="days_cover_before", aggfunc="mean")
     COVER = float(res.meta.get("days_of_cover", 0))
     AMBER = PatternFill("solid", fgColor="FFE699")
+    LOWORANGE = PatternFill("solid", fgColor="FCE4D6")   # outage risk
     sku_order = [s_ for s_ in can.sku_master["sku_u"] if s_ in pq.index]
     # header rows 3 (region, merged over 2 cols) and 4 (Plan | Velocity)
     sku_asin = dict(zip(can.sku_master["sku_u"], can.sku_master["asin"]))
     for c0, t0 in ((1, "ASIN"), (2, "SKU"), (3, "Product")):
         _style_hdr(vs.cell(3, c0, t0)); _style_hdr(vs.cell(4, c0, ""))
     col = 4
-    SUB = ("Plan qty", "Velocity /day", "Days cover")
+    SUB = ("Plan qty", "Velocity /day", "Cover BEFORE plan", "Days cover")
     for rg in regions + ["TOTAL"]:
         _style_hdr(vs.cell(3, col, rg))
         vs.merge_cells(start_row=3, start_column=col,
-                       end_row=3, end_column=col + 2)
+                       end_row=3, end_column=col + 3)
         for k, t_ in enumerate(SUB):
             _style_hdr(vs.cell(4, col + k, t_))
-        col += 3
+        col += 4
     vs.row_dimensions[3].height = 18
-    vs.row_dimensions[4].height = 28
+    vs.row_dimensions[4].height = 40         # refined by _fit_rows below
     REG_BORDER = Border(left=Side(style="medium", color="1F4E5F"))
-    band_starts = list(range(4, col, 3))
+    band_starts = list(range(4, col, 4))
 
-    def _trio(r0, c0, q, v, dc=None):
+    def _trio(r0, c0, q, v, dc=None, db=None):
         if q:
             vs.cell(r0, c0, int(q))
         if v:
             vs.cell(r0, c0 + 1, round(v, 2)).number_format = "0.00"
+            if db is not None and db == db:      # cover BEFORE plan
+                c1 = vs.cell(r0, c0 + 2, round(float(db), 1))
+                c1.number_format = "0.0"
+                if COVER and db < COVER * 0.5:   # outage risk: existing +
+                    c1.fill = LOWORANGE          # incoming < half the target
             if dc is None:
                 dc = q / v if q else None
             if dc is not None and dc == dc:      # not NaN
-                c2 = vs.cell(r0, c0 + 2, round(float(dc), 1))
+                c2 = vs.cell(r0, c0 + 3, round(float(dc), 1))
                 c2.number_format = "0.0"
                 if COVER and dc > COVER * 1.5:   # 50% slack: carton rounding is not overstock
                     c2.fill = AMBER              # over the cover setting
     r_ = 5
     BAND = PatternFill("solid", fgColor="F2F2F2")
+    n_cols_total = 3 + 4 * (len(regions) + 1)
     for i_, sku in enumerate(sku_order):
+        if i_ % 2:                               # band FIRST so amber/orange
+            for c_ in range(1, n_cols_total + 1):  # written after it win
+                vs.cell(r_, c_).fill = BAND
         vs.cell(r_, 1, sku_asin.get(sku, ""))
         vs.cell(r_, 2, sku)
         vs.cell(r_, 3, alias.get(sku, ""))
         vs.row_dimensions[r_].height = 18
         col = 4
         wsum, vsum = 0.0, 0.0
+        bsum = 0.0
         for rg in regions:
             v0 = float(dv_.loc[sku].get(rg, 0.0))
             d0 = (float(dc_.loc[sku].get(rg))
                   if rg in dc_.columns and dc_.loc[sku].notna().get(rg, False)
                   else None)
-            _trio(r_, col, int(pq.loc[sku].get(rg, 0)), v0, dc=d0)
+            b0 = (float(db_.loc[sku].get(rg))
+                  if rg in db_.columns and db_.loc[sku].notna().get(rg, False)
+                  else None)
+            _trio(r_, col, int(pq.loc[sku].get(rg, 0)), v0, dc=d0, db=b0)
             if v0 and d0 is not None:
                 wsum += v0 * d0; vsum += v0
-            col += 3
+            if v0 and b0 is not None:
+                bsum += v0 * b0
+            col += 4
         _trio(r_, col, int(pq.loc[sku].sum()), float(dv_.loc[sku].sum()),
-              dc=(wsum / vsum if vsum else None))
-        if i_ % 2:
-            for c_ in range(1, col + 3):
-                vs.cell(r_, c_).fill = PatternFill("solid",
-                                                   fgColor="F2F2F2")
+              dc=(wsum / vsum if vsum else None),
+              db=(bsum / vsum if vsum else None))
         r_ += 1
     vs.cell(r_, 1, "TOTAL")
     vs.row_dimensions[r_].height = 18
@@ -301,13 +320,16 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
             if rg in dc_.columns else 0.0
         v_ = float(dv_[rg][dc_[rg].notna()].sum()) \
             if rg in dc_.columns else 0.0
+        b_ = float((dv_[rg] * db_[rg].fillna(0)).sum()) \
+            if rg in db_.columns else 0.0
         _trio(r_, col, int(pq[rg].sum()), float(dv_[rg].sum()),
-              dc=(w_ / v_ if v_ else None))
+              dc=(w_ / v_ if v_ else None),
+              db=(b_ / v_ if v_ else None))
         gw += w_; gv += v_
-        col += 3
+        col += 4
     _trio(r_, col, int(pq.values.sum()), float(dv_.values.sum()),
           dc=(gw / gv if gv else None))
-    for c_ in range(1, col + 3):
+    for c_ in range(1, col + 4):
         vs.cell(r_, c_).font = Font(bold=True)
     # medium teal border at every region-block start, header to TOTAL
     for c_ in band_starts + [col]:
@@ -319,8 +341,9 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     vs.column_dimensions["B"].width = 20
     vs.column_dimensions["C"].width = 30
     from openpyxl.utils import get_column_letter
-    for c_ in range(4, col + 3):
+    for c_ in range(4, col + 4):
         vs.column_dimensions[get_column_letter(c_)].width = 11
+    _fit_rows(vs, [3, 4])                    # v2.9.2: size to actual text
     vs.freeze_panes = "D5"
 
     # ---- Stock snapshot (v2.9.1): values from the uploaded workbook's
@@ -355,15 +378,31 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
                    afp if lbl.startswith("At the FC") else cur)
             if sku_u not in getattr(src, "index", []):
                 continue
-            total = 0
+            total, special = 0, 0
+            hub_l = getattr(can, "ixd_region", "BLR4 IXD")
+            ysx_l = getattr(can, "ignore_region", "YSXA")
             for region, c_ in ss_hdr.items():
                 if region in src.columns:
                     v = int(src.loc[sku_u, region])
                     if v:
                         ss.cell(r_, c_, v)
                     total += v
+                    if region in (hub_l, ysx_l):
+                        special += v
             if "Grand Total" in ss_hdr and total:
                 ss.cell(r_, ss_hdr["Grand Total"], total)
+            reg_col = ss_hdr.get("Regional (excl. IXD & YSXA)")
+            if reg_col and total:                       # v2.9.2 fix
+                ss.cell(r_, reg_col, total - special)
+            asod_col = ss_hdr.get("Current stock (as-on-date)")
+            if (asod_col and not lbl.startswith(("In transit", "At the FC"))
+                    and stock.as_on_date is not None
+                    and len(stock.as_on_date)):
+                m = stock.as_on_date
+                hit = m[m["sku_u"].str.upper() == sku_u]
+                if len(hit):
+                    ss.cell(r_, asod_col, int(hit["qty"].iloc[0]))
+        _fit_rows(ss, [1, 2])                # v2.9.2
         if getattr(stock, "stock_as_of", None) is not None:
             ss.cell(1, ss.max_column,
                     "As of " + stock.stock_as_of.strftime("%d-%b-%Y"))
@@ -377,6 +416,12 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
             warns.append(f"Combined output: daily tabs could not be copied "
                          f"({e}) — plan tabs are complete; the daily "
                          f"workbook remains your separate file this run.")
+
+    # ---- v2.9.2: final header-fit pass on the tabs we author
+    for _t in ("Appointment plan", DETAILS_SHEET, "Sales velocity",
+               "Stock snapshot"):
+        if _t in wb.sheetnames:
+            _fit_rows(wb[_t], range(1, 5))
 
     # ---- v2.9.2: tab colours + reading order (names unchanged — formulas
     #      and the reader reference tabs by name, so we NEVER rename)
@@ -402,8 +447,46 @@ def build_plan_workbook(res: PlanResult, can: Canonical,
     return warns
 
 
+def _fit_rows(ws, rows=None, min_h=15.0, line_h=13.5, pad=4.0):
+    """v2.9.2: size row heights to the WRAPPED text they actually hold, using
+    each cell's effective column width (merged spans summed). Replaces the
+    hand-guessed heights that kept truncating headers."""
+    from openpyxl.utils import get_column_letter as _gl
+    import math as _m
+    span = {}
+    for mc in ws.merged_cells.ranges:
+        for rr in range(mc.min_row, mc.max_row + 1):
+            for cc in range(mc.min_col, mc.max_col + 1):
+                span[(rr, cc)] = (mc.min_col, mc.max_col)
+    for r in (rows if rows is not None else range(1, ws.max_row + 1)):
+        need = min_h
+        for c in range(1, ws.max_column + 1):
+            cell = ws.cell(r, c)
+            v = cell.value
+            if not isinstance(v, str) or not v.strip() or v.startswith("="):
+                continue
+            al = cell.alignment
+            if not (al and al.wrap_text):
+                continue
+            if (r, c) in span:
+                c0, c1 = span[(r, c)]
+                w = sum((ws.column_dimensions[_gl(x)].width or 8.43)
+                        for x in range(c0, c1 + 1))
+            else:
+                w = ws.column_dimensions[_gl(c)].width or 8.43
+            lines = _m.ceil(len(v) / max(w - 1.0, 4.0))
+            need = max(need, lines * line_h + pad)
+        cur = ws.row_dimensions[r].height
+        if not cur or cur < need:
+            ws.row_dimensions[r].height = need
+
+
 DAILY_TABS = ["Reference", "Current stock", "In-transit", "At the FC",
               "Overall stock", "EDD & Expiry"]      # all-or-nothing family
+_MIN_WIDTHS = {"In-transit": ("G", "H", "I"),       # date columns
+               "At the FC": ("H", "I")}
+_HDR_ROWS = {"In-transit": 2, "At the FC": 2, "Current stock": 2,
+             "Overall stock": 2}                    # wrapped header rows
 
 
 def _sanitize_formula(tab, row, col, value, notes):
@@ -449,6 +532,13 @@ def _merge_daily_tabs(wb, src):
         for mc in src_ws.merged_cells.ranges:
             ns.merge_cells(str(mc))
         ns.freeze_panes = src_ws.freeze_panes
+        # v2.9.2: enforce readable minimums regardless of the source file
+        # (old workbooks carry narrow date columns -> ######, short headers)
+        for col_l in _MIN_WIDTHS.get(t, ()):
+            cd = ns.column_dimensions[col_l]
+            if not cd.width or cd.width < 13:
+                cd.width = 13
+        _fit_rows(ns, range(1, min(4, ns.max_row) + 1))   # v2.9.2 headers
     for name, defn in daily.defined_names.items():   # LEADTBL / SKUTBL
         if name not in wb.defined_names:
             wb.defined_names[name] = defn

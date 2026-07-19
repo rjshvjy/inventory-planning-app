@@ -438,6 +438,13 @@ def round_boxes(df: pd.DataFrame, master: pd.DataFrame, cfg: dict,
                     + r["at_fc_pending"] + r["ixd_offset"] + r["rounded_qty"])
                    / r["daily"] - r["lead"]) if r["daily"] > 0 else float("inf"),
         axis=1)
+    # v2.9.2: cover WITHOUT the planned qty — outage-risk view. Negative =
+    # existing+incoming stock runs out before the lead time even elapses.
+    out["days_cover_before"] = out.apply(
+        lambda r: ((r["current"] + r["in_transit_counted"]
+                    + r["at_fc_pending"] + r["ixd_offset"])
+                   / r["daily"] - r["lead"]) if r["daily"] > 0 else float("inf"),
+        axis=1)
     return out
 
 
@@ -591,7 +598,8 @@ def run_calculation(can: Canonical, stock: StockInputs, days_of_cover: float,
     plan_cols = ["sku_u", "asin", "region", "daily", "current",
                  "in_transit_counted", "at_fc_pending", "ixd_offset",
                  "raw_requirement", "rounded_qty", "boxes",
-                 "days_cover_achieved", "priority", "flags"]
+                 "days_cover_before", "days_cover_achieved",
+                 "priority", "flags"]
     df = df.rename(columns={"daily": "daily"})
     result.plan = (df[plan_cols]
                    .sort_values(["sku_u", "region"])
